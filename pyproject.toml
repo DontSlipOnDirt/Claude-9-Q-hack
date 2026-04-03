@@ -1,0 +1,8 @@
+[project]
+name = "claude-9-q-hack"
+version = "0.1.0"
+description = "Repo for Q hack 2026"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
