@@ -20,6 +20,12 @@ Use these keys to connect the generated CSV files:
 - `ingredient_articles.article_sku` -> `articles.sku`
 - `orderline_ids.order_id` -> `orders.id`
 - `orderline_ids.orderline_id` -> `orderlines.id`
+- `customer_preferences.customer_id` -> `customers.id`
+- `customer_preferences.tag_id` -> `preference_tags.id`
+- `article_tags.article_sku` -> `articles.sku`
+- `article_tags.tag_id` -> `preference_tags.id`
+- `recipe_tags.recipe_id` -> `recipes.id`
+- `recipe_tags.tag_id` -> `preference_tags.id`
 
 Bridge tables for list/map fields:
 
@@ -29,3 +35,12 @@ Bridge tables for list/map fields:
 - `recipe_instructions.csv` for `Recipe.instructions`
 - `ingredient_articles.csv` for `Ingredient *--* Article`
 - `orderline_ids.csv` for `Order.orderline_ids`
+
+Preference and onboarding extensions:
+
+- `preference_tags.csv` defines reusable user/product/recipe tags
+- `customer_preferences.csv` stores each customer's selected preference tags
+- `article_tags.csv` maps products to preference tags
+- `recipe_tags.csv` maps recipes to preference tags
+
+Onboarding questions are intentionally handled in backend logic (not stored in DB).

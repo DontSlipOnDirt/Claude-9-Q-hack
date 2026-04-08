@@ -1,4 +1,5 @@
 id,name,date_of_birth,email,phone_number,address,country,house_hold_size
+eeeeeeee-eeee-4eee-8eee-000000000001,Picnic Demo,1992-01-01,demo@picnic.com,+31 20 000 0000,"Demo Street 1, Amsterdam",Netherlands,2
 a1b2c3d4-e5f6-7890-1234-567890abcdef,Alex Doe,1990-05-15,alex.doe@example.com,+49 123 456789,"123 Main St, Exampletown",Germany,4
 b1c2d3e4-f5a6-7890-1234-567890abcdef,Samira Khan,1987-09-02,samira.khan@example.com,+49 151 1112223,"45 River Rd, Frankfurt",Germany,3
 c1d2e3f4-a5b6-7890-1234-567890abcdef,Luca Rossi,1994-12-11,luca.rossi@example.com,+39 333 4445556,"12 Via Roma, Milan",Italy,2
