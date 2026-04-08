@@ -1,6 +1,0 @@
-id,name,sku,category,nutrition_table,nutriscore,carbon_footprint,is_biological,description,image_url,is_available,price
-c3d4e5f6-a7b8-9012-3456-7890abcdef01,Romaine lettuce,VEG-LET-001,Vegetables,"Calories: 15, Fat: 0.2g, Carbs: 2.9g, Protein: 1.4g (per 100g)",A,0.5,true,Crisp romaine lettuce for salads.,https://placehold.co/300x300/a2d9a1/333333?text=Lettuce,true,0.75
-22222222-3333-4444-8555-666666666666,Tomato,VEG-TOM-001,Vegetables,"Calories: 18, Fat: 0.2g, Carbs: 3.9g, Protein: 0.9g (per 100g)",A,0.4,true,Fresh ripe tomatoes.,https://placehold.co/300x300/f5b7b1/333333?text=Tomato,true,0.60
-33333333-4444-4555-8666-777777777777,Cucumber,VEG-CUC-001,Vegetables,"Calories: 16, Fat: 0.1g, Carbs: 3.6g, Protein: 0.7g (per 100g)",A,0.3,true,Crisp cucumber ideal for salads.,https://placehold.co/300x300/aed6f1/333333?text=Cucumber,true,0.55
-44444444-5555-4666-8777-888888888888,Skimmed milk,DAI-MLK-001,Dairy,"Calories: 35, Fat: 0.1g, Carbs: 5g, Protein: 3.4g (per 100ml)",B,1.2,false,Low fat skimmed milk.,https://placehold.co/300x300/f9e79f/333333?text=Milk,true,1.29
-55555555-6666-4777-8888-999999999999,Olive oil,OIL-OLV-001,Pantry,"Calories: 884, Fat: 100g, Carbs: 0g, Protein: 0g (per 100ml)",C,2.5,true,Extra virgin olive oil.,https://placehold.co/300x300/f7dc6f/333333?text=Olive+Oil,true,4.99
