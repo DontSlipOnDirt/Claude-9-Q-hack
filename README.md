@@ -1,43 +1,82 @@
 # Claude-9-Q-hack
 
 Picnic Q-Hack demo app with:
-- SQLite data model populated from CSVs
-- FastAPI backend (`backend/backend.py`)
-- Figma-style themed frontend SPA (`frontend/`)
+
+- SQLite data model populated from CSVs under `data/`
+- FastAPI backend (`backend/main.py` — includes `match-dishes`, `shopping-basket`, and all catalog/auth routes)
+- **Meal Planner Pro**–style UI: Vite + React + TypeScript in `frontend/`
 
 ## Run locally
 
-1. Build database:
-   - `python data/build_sqlite_db.py`
-2. Install deps:
-   - `pip install fastapi uvicorn`
-3. Start app:
-   - `python main.py`
-4. Open:
-   - [http://127.0.0.1:8000](http://127.0.0.1:8000)
+### 1. Database
 
-You land on **Log in / Register**. Log in uses **email + password** (there is no separate username field).
+Build **`data/picnic_data.db`** from CSVs:
+
+```bash
+python scripts/build_sqlite_db.py
+```
+
+Article photos are served from **`frontend/public/catalog/{sku}.png`**. `data/articles.csv` `image_url` values use paths like `/catalog/VEG-TOM-001.png`. After changing images or `image_url`, run `python scripts/build_sqlite_db.py` so SQLite matches.
+
+### 2. Python API
+
+```bash
+pip install -e .
+# or: pip install fastapi uvicorn
+python main.py
+```
+
+API: [http://127.0.0.1:8000](http://127.0.0.1:8000) · OpenAPI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+### 3. Frontend (development)
+
+In a **second** terminal (Vite proxies `/api` to the Python server):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) (or the host shown in the terminal).
+
+### 4. Single-port production-style run
+
+Build the SPA, then start only Python (serves `frontend/dist` + `/api`):
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+python main.py
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+### Auth demo
 
 - **Primary demo account:** `demo@picnic.com` / `picnic123` (rebuild DB after pulling latest `customers.csv`).
 - **Other seed customers:** password **`demo`** (e.g. `alex.doe@example.com`).
 
-The main UI follows the **Picnic weekly meal planner** layout (toolbar, planner grid, footer checkout) with **Recipes**, **Basket**, and **History** in the top nav.
+### Optional: AI dish matching
+
+Add repo-root `openai.env` with `OPENAI_KEY=` (and optional `OPENAI_MODEL=`) so `POST /api/catalog/match-dishes` and the in-app **AI Meal Assistant** work.
 
 ## API highlights
 
 - `GET /api/health`
-- `POST /api/auth/login` — `{ "email", "password" }`
-- `POST /api/auth/register` — `{ "name", "email", "password", ...optional profile fields }`
-- `GET /api/customers/{customer_id}` — session restore (no password in response)
-- `GET /api/customers`
-- `GET /api/tags`
+- `POST /api/auth/login`, `POST /api/auth/register`
+- `GET /api/customers`, `GET /api/customers/{customer_id}`
+- `GET /api/tags`, `GET/PUT /api/customers/{customer_id}/preferences`
 - `GET /api/onboarding/questions`
-- `GET/PUT /api/customers/{customer_id}/preferences`
 - `GET /api/recommendations/{customer_id}`
-- `GET /api/catalog/articles`
-- `GET /api/catalog/articles/{sku}`
+- `GET /api/catalog/articles`, `GET /api/catalog/articles/{sku}`
 - `GET /api/catalog/recipes`
-- `POST /api/orders`
-- `GET /api/orders/{order_id}`
-- `GET /api/deliveries`
-- `GET /api/customers/{customer_id}/orders`
+- `POST /api/catalog/shopping-from-meals`
+- `POST /api/catalog/match-dishes` (OpenAI)
+- `GET /api/customers/{customer_id}/shopping-basket`
+- `GET /api/deliveries`, `POST /api/orders`, order getters
+
+## Frontend ↔ backend wiring
+
+- Weekly planner loads recipes from `GET /api/catalog/recipes` and fills the grid; basket uses `POST /api/catalog/shopping-from-meals` when slots carry `recipeId`.
+- **Items** loads articles from `GET /api/catalog/articles` (falls back to mock data if the API is down).
+- **AI panel** calls `POST /api/catalog/match-dishes`.
