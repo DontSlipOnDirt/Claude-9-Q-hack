@@ -1,0 +1,10 @@
+recipe_id,step_number,instruction
+b2c3d4e5-f6a7-8901-2345-67890abcdef0,1,Wash vegetables.
+b2c3d4e5-f6a7-8901-2345-67890abcdef0,2,Chop vegetables.
+b2c3d4e5-f6a7-8901-2345-67890abcdef0,3,Mix in a bowl.
+11111111-2222-4333-8444-555555555555,1,Wash cucumber and tomatoes.
+11111111-2222-4333-8444-555555555555,2,Slice vegetables.
+11111111-2222-4333-8444-555555555555,3,Toss and season to taste.
+66666666-7777-4888-8999-000000000000,1,Add skimmed milk to a bowl.
+66666666-7777-4888-8999-000000000000,2,Whisk in olive oil until creamy.
+66666666-7777-4888-8999-000000000000,3,Season and serve.
