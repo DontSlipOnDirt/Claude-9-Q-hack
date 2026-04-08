@@ -151,26 +151,35 @@ const Index = () => {
     )
       .then((res) => {
         if (cancelled) return;
-        const merged = new Map<string, BasketIngredient>();
+        const metaBySku = new Map<
+          string,
+          { article_name: string; ingredient_name: string; meal_label: string }
+        >();
         for (const row of res.detail) {
-          const sku = row.sku;
-          const existing = merged.get(sku);
-          if (existing) {
-            existing.quantity += row.quantity;
-          } else {
-            merged.set(sku, {
-              id: sku,
-              name: row.article_name,
-              brand: row.ingredient_name,
-              price: row.unit_price,
-              weight: `${row.quantity}×`,
-              image: "🛒",
-              quantity: row.quantity,
-              fromMeal: row.meal_label,
+          if (!metaBySku.has(row.sku)) {
+            metaBySku.set(row.sku, {
+              article_name: row.article_name,
+              ingredient_name: row.ingredient_name,
+              meal_label: row.meal_label,
             });
           }
         }
-        setBasketIngredients([...merged.values()]);
+        const merged: BasketIngredient[] = [];
+        for (const line of res.checkout_lines) {
+          const meta = metaBySku.get(line.sku);
+          if (!meta) continue;
+          merged.push({
+            id: line.sku,
+            name: line.name,
+            brand: meta.ingredient_name,
+            price: line.unit_price,
+            weight: `${line.quantity}×`,
+            image: "🛒",
+            quantity: line.quantity,
+            fromMeal: meta.meal_label,
+          });
+        }
+        setBasketIngredients(merged);
       })
       .catch(() => {
         if (cancelled) return;
