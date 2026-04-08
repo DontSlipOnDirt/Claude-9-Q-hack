@@ -2,3 +2,4 @@ id,name,date_of_birth,email,phone_number,address,country,house_hold_size
 a1b2c3d4-e5f6-7890-1234-567890abcdef,Alex Doe,1990-05-15,alex.doe@example.com,+49 123 456789,"123 Main St, Exampletown",Germany,4
 b1c2d3e4-f5a6-7890-1234-567890abcdef,Samira Khan,1987-09-02,samira.khan@example.com,+49 151 1112223,"45 River Rd, Frankfurt",Germany,3
 c1d2e3f4-a5b6-7890-1234-567890abcdef,Luca Rossi,1994-12-11,luca.rossi@example.com,+39 333 4445556,"12 Via Roma, Milan",Italy,2
+d1e2f3a4-b5c6-4789-9123-abcdefabcdef,Jacob Chen,1989-03-24,jacob.chen@example.com,+49 170 5550199,"17 Elbchaussee, Hamburg",Germany,5

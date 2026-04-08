@@ -2,3 +2,21 @@ id,name,portion_quantity,cook_time,description
 b2c3d4e5-f6a7-8901-2345-67890abcdef0,Simple Salad,2,PT15M,A fresh and crunchy starter.
 11111111-2222-4333-8444-555555555555,Cucumber Tomato Salad,3,PT20M,A refreshing side dish with herbs.
 66666666-7777-4888-8999-000000000000,Creamy Milk Dressing,4,PT10M,A simple creamy dressing base.
+r1000000-0000-4000-8000-000000000001,Mediterranean Chicken Bowl,2,PT25M,Lean chicken with rice and bright vegetables.
+r1000000-0000-4000-8000-000000000002,Pasta Primavera,3,PT30M,A simple vegetable pasta with parmesan.
+r1000000-0000-4000-8000-000000000003,Berry Yogurt Oats,1,PT8M,A quick breakfast bowl with fruit and oats.
+r1000000-0000-4000-8000-000000000004,Lemon Herb Salmon Bowl,2,PT25M,Fresh salmon with rice and bright citrus flavors.
+r1000000-0000-4000-8000-000000000005,Turkey Avocado Wrap,2,PT10M,A quick wrap with turkey and avocado.
+r1000000-0000-4000-8000-000000000006,Veggie Omelette,1,PT12M,A light omelette with vegetables and feta.
+r1000000-0000-4000-8000-000000000007,Chickpea Coconut Curry,3,PT30M,A warm chickpea curry with rice.
+r1000000-0000-4000-8000-000000000008,Beef and Pepper Stir-Fry,2,PT20M,Quick beef stir-fry with vegetables and rice.
+r1000000-0000-4000-8000-000000000009,Mushroom Risotto,3,PT35M,Creamy risotto with mushrooms and parmesan.
+r1000000-0000-4000-8000-000000000010,Greek Yogurt Parfait,1,PT8M,A simple yogurt bowl with berries and oats.
+r1000000-0000-4000-8000-000000000011,Sweet Potato Tacos,2,PT25M,Roasted sweet potato tacos with avocado.
+r1000000-0000-4000-8000-000000000012,Tomato Basil Toast,2,PT10M,Simple toast with tomato and basil.
+r1000000-0000-4000-8000-000000000013,Shrimp Fried Rice,2,PT22M,Shrimp fried rice with eggs and vegetables.
+r1000000-0000-4000-8000-000000000014,Lentil Soup,4,PT40M,Hearty lentil soup with vegetables.
+r1000000-0000-4000-8000-000000000015,Chicken Caesar Wrap,2,PT15M,Chicken wrap with lettuce and parmesan.
+r1000000-0000-4000-8000-000000000016,Baked Cod with Potatoes,2,PT30M,Baked cod with lemon potatoes.
+r1000000-0000-4000-8000-000000000017,Spinach Feta Pasta,3,PT25M,Pasta with spinach, feta, and tomato.
+r1000000-0000-4000-8000-000000000018,Apple Cinnamon Oats,1,PT5M,Quick oats with apple and cinnamon.

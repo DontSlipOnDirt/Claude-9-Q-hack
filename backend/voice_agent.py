@@ -12,7 +12,7 @@ load_dotenv()
 # ---------- Agent Config ----------
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = "claude-haiku-4-5"
-ANTHROPIC_MAX_TOKENS = 700
+ANTHROPIC_MAX_TOKENS = 250
 ANTHROPIC_TEMPERATURE = 0.4
 
 DEFAULT_MAX_RECIPES = 20
@@ -25,9 +25,11 @@ SERVER_DEBUG = True
 SYSTEM_INSTRUCTIONS = (
     "You are a meal recommendation assistant. "
     "Use ONLY the recipes and ingredients provided in the JSON catalog. "
-    "Recommend 2-3 meals that best match the user request. "
-    "For each meal include: name, why it matches, ingredients list with quantities, "
-    "and concise steps. If no strong match exists, suggest closest options and explain tradeoffs."
+    "Respond in very brief natural language that can be read aloud easily. "
+    "Use no markdown, no bullets, no headings, no numbering, and no code formatting. "
+    "Recommend 1 to 3 meals at most. "
+    "For each meal, keep the explanation short and plain. "
+    "If no strong match exists, suggest the closest options and explain tradeoffs briefly."
 )
 
 
@@ -105,6 +107,23 @@ def build_anthropic_prompt(user_query: str, catalog):
     )
 
 
+def strip_markdown(text: str) -> str:
+    """Remove common markdown characters so the response reads naturally aloud."""
+    text = text.replace("```", " ")
+    text = text.replace("**", "")
+    text = text.replace("__", "")
+    text = text.replace("#", "")
+    text = text.replace("*", "")
+    text = text.replace("- ", "")
+    text = text.replace("•", "")
+    text = text.replace("`", "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    cleaned = " ".join(lines)
+    while "  " in cleaned:
+        cleaned = cleaned.replace("  ", " ")
+    return cleaned.strip()
+
+
 def suggest_meals_with_anthropic(user_query: str, max_recipes: int = DEFAULT_MAX_RECIPES):
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY is missing from environment")
@@ -125,7 +144,7 @@ def suggest_meals_with_anthropic(user_query: str, max_recipes: int = DEFAULT_MAX
         value = getattr(block, "text", None)
         if value:
             text_chunks.append(value)
-    return "\n".join(text_chunks).strip()
+    return strip_markdown("\n".join(text_chunks).strip())
 
 
 app = Flask(__name__)

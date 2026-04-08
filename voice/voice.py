@@ -1,6 +1,7 @@
 ﻿import os
 from datetime import datetime
 from io import BytesIO
+import threading
 
 import pyaudio
 import requests
@@ -15,6 +16,7 @@ ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL")
 MEAL_AGENT_URL = "http://127.0.0.1:5001/meal-suggestions"
 MEAL_AGENT_TIMEOUT_SECONDS = 90
 MEAL_AGENT_MAX_RECIPES = 20
+INTERRUPT_PHRASES = {"stop", "wait", "pause", "hold on", "cancel", "ok"}
 
 if not ELEVENLABS_API_KEY:
     raise RuntimeError("ELEVENLABS_API_KEY is missing. Add it to .env")
@@ -23,6 +25,8 @@ if not ELEVENLABS_API_KEY:
 os.makedirs("voice/conversations", exist_ok=True)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE = os.path.join("voice/conversations", f"log_{timestamp}.txt")
+
+interrupt_event = threading.Event()
 
 
 def log_interaction(role, text):
@@ -51,9 +55,40 @@ def transcribe_with_elevenlabs(audio_data):
     return text or None
 
 
+def listen_for_interrupt():
+    """Listen in the background for a short stop phrase while the assistant is speaking."""
+    recognizer = sr.Recognizer()
+
+    try:
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source, duration=0.2)
+            while not interrupt_event.is_set():
+                try:
+                    audio = recognizer.listen(source, timeout=0.8, phrase_time_limit=1.5)
+                    text = transcribe_with_elevenlabs(audio)
+                    if not text:
+                        continue
+
+                    cleaned = text.lower().strip()
+                    if any(phrase == cleaned or phrase in cleaned for phrase in INTERRUPT_PHRASES):
+                        log_interaction("User", f"Interrupt: {text}")
+                        interrupt_event.set()
+                        return
+                except sr.WaitTimeoutError:
+                    continue
+                except requests.RequestException:
+                    continue
+    except Exception:
+        return
+
+
 def speak(text):
     """Speak text with ElevenLabs TTS and play raw PCM on laptop speakers."""
     log_interaction("Agent", text)
+    interrupt_event.clear()
+
+    listener = threading.Thread(target=listen_for_interrupt, daemon=True)
+    listener.start()
 
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
@@ -78,8 +113,13 @@ def speak(text):
     player = pyaudio.PyAudio()
     stream = player.open(format=pyaudio.paInt16, channels=1, rate=22050, output=True)
     try:
-        stream.write(response.content)
+        chunk_size = 4096
+        for index in range(0, len(response.content), chunk_size):
+            if interrupt_event.is_set():
+                break
+            stream.write(response.content[index:index + chunk_size])
     finally:
+        interrupt_event.set()
         stream.stop_stream()
         stream.close()
         player.terminate()
