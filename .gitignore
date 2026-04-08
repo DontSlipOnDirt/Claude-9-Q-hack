@@ -209,5 +209,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Local data (CSVs, SQLite, generators) — keep on machine only, not in the repo
+data/
+
 # Figma — binary exports are often 50–100MB+; keep local or use Git LFS / Figma links
 *.fig
