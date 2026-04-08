@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.responses import FileResponse
+from starlette.staticfiles import StaticFiles
 
 from backend.config import DB_PATH, FRONTEND_DIR, OPENAI_ENV_PATH
 from backend.db import Db
@@ -556,30 +557,36 @@ def get_customer_shopping_basket(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-def _frontend_file(name: str) -> Path:
-    return FRONTEND_DIR / name
+FRONTEND_DIST = FRONTEND_DIR / "dist"
 
 
-def _frontend_assets_ready() -> bool:
-    """Only serve the UI when all static assets exist (avoid FileResponse on missing paths)."""
-    if not FRONTEND_DIR.is_dir():
-        return False
-    return all(
-        _frontend_file(name).is_file()
-        for name in ("index.html", "styles.css", "app.js")
-    )
+def _spa_dist_ready() -> bool:
+    return FRONTEND_DIST.is_dir() and (FRONTEND_DIST / "index.html").is_file()
 
 
-if _frontend_assets_ready():
-    # Do not use StaticFiles.mount("/") — it catches POST /api/* and returns 405.
+if _spa_dist_ready():
+    _assets_dir = FRONTEND_DIST / "assets"
+    if _assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(_assets_dir)),
+            name="vite_assets",
+        )
+
     @app.get("/")
-    def serve_index() -> FileResponse:
-        return FileResponse(_frontend_file("index.html"))
+    def serve_spa_index() -> FileResponse:
+        return FileResponse(FRONTEND_DIST / "index.html")
 
-    @app.get("/styles.css")
-    def serve_styles() -> FileResponse:
-        return FileResponse(_frontend_file("styles.css"))
-
-    @app.get("/app.js")
-    def serve_app_js() -> FileResponse:
-        return FileResponse(_frontend_file("app.js"))
+    @app.get("/{full_path:path}")
+    def serve_spa_fallback(full_path: str) -> FileResponse:
+        if full_path.startswith("api"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        dist_root = FRONTEND_DIST.resolve()
+        try:
+            candidate.relative_to(dist_root)
+        except ValueError:
+            return FileResponse(FRONTEND_DIST / "index.html")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")

@@ -1,205 +1,26 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Picnic — Weekly Meal Planner</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
-  <link rel="stylesheet" href="./styles.css"/>
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- TODO: Set the document title to the name of your application -->
+    <title>Lovable App</title>
+    <meta name="description" content="Lovable Generated Project" />
+    <meta name="author" content="Lovable" />
 
-  <div id="auth-gate" class="auth-gate" aria-live="polite">
-    <div class="auth-card">
-      <h1 class="auth-brand">Picnic</h1>
-      <p class="auth-sub">Sign in or create an account</p>
-      <div class="auth-tabs" role="tablist">
-        <button type="button" class="auth-tab is-active" data-auth-tab="login">Log in</button>
-        <button type="button" class="auth-tab" data-auth-tab="register">Register</button>
-      </div>
-      <form id="form-login" class="auth-form" autocomplete="on">
-        <label class="auth-label" for="loginEmail">Email</label>
-        <input id="loginEmail" class="auth-input" type="email" name="email" required />
-        <label class="auth-label" for="loginPassword">Password</label>
-        <input id="loginPassword" class="auth-input" type="password" name="password" required />
-        <button type="submit" class="checkout-btn auth-submit">Log in</button>
-      </form>
-      <form id="form-register" class="auth-form hidden" autocomplete="on">
-        <label class="auth-label" for="regName">Name</label>
-        <input id="regName" class="auth-input" type="text" required />
-        <label class="auth-label" for="regEmail">Email</label>
-        <input id="regEmail" class="auth-input" type="email" required />
-        <label class="auth-label" for="regPassword">Password (min 6 characters)</label>
-        <input id="regPassword" class="auth-input" type="password" minlength="6" required />
-        <button type="submit" class="checkout-btn auth-submit">Create account</button>
-      </form>
-      <p id="authMessage" class="auth-message" role="status"></p>
-      <p class="auth-hint">
-        Try <strong>demo@picnic.com</strong> / <code>picnic123</code>
-        — or any seed email with password <code>demo</code> (e.g. alex.doe@example.com).
-      </p>
-    </div>
-  </div>
+    <!-- TODO: Update og:title to match your application name -->
+    <meta property="og:title" content="Lovable App" />
+    <meta property="og:description" content="Lovable Generated Project" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
 
-  <div id="app-root" class="hidden">
-    <header class="topbar">
-      <a class="logo" href="#" id="logo-home">
-        <div class="logo-icon">
-          <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3.5 8.5h13l-1.4 7A1.5 1.5 0 0113.6 17H6.4a1.5 1.5 0 01-1.5-1.5L3.5 8.5z" fill="white"/>
-            <path d="M7.5 8.5V6A2.5 2.5 0 0112.5 6v2.5" stroke="white" stroke-width="1.4" stroke-linecap="round"/>
-            <line x1="8" y1="12.5" x2="12" y2="12.5" stroke="#E61E14" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <span class="logo-name">Picnic</span>
-      </a>
-      <nav class="topnav">
-        <a class="active" data-app-nav="planner">This week</a>
-        <a data-app-nav="items">Items</a>
-        <a data-app-nav="basket">Basket</a>
-        <a data-app-nav="history">History</a>
-        <button type="button" class="topbar-refresh" id="refreshBtn" title="Refresh data">Refresh</button>
-        <button type="button" class="topbar-logout" id="logoutBtn" title="Log out">Log out</button>
-        <div class="avatar" id="userAvatar" aria-hidden="true">—</div>
-      </nav>
-    </header>
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@Lovable" />
+    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+  </head>
 
-    <div id="planner-chrome">
-      <div class="toolbar">
-        <span class="toolbar-label">Show</span>
-        <div class="filter-group">
-          <div class="chip meal-on meal-filter" data-meal="breakfast">Breakfast</div>
-          <div class="chip meal-on meal-filter" data-meal="lunch">Lunch</div>
-          <div class="chip meal-on meal-filter" data-meal="dinner">Dinner</div>
-        </div>
-        <div class="sep"></div>
-        <span class="toolbar-label">Style</span>
-        <div class="filter-group">
-          <div class="chip seasonal-on style-filter" data-cls="seasonal-on">Seasonal</div>
-          <div class="chip mixed-on style-filter" data-cls="mixed-on">Mixed cuisine</div>
-          <div class="chip style-filter" data-cls="lowcarb-on">Low carb</div>
-          <div class="chip style-filter" data-cls="protein-on">High protein</div>
-          <div class="chip style-filter" data-cls="kids-on">Kid-friendly</div>
-          <div class="chip style-filter" data-cls="vegan-on">Vegan</div>
-        </div>
-        <div class="sep"></div>
-        <button type="button" class="ai-btn" id="ai-toggle">
-          <span class="ai-dot"></span>Personalise
-        </button>
-      </div>
-
-      <div class="ai-panel" id="ai-panel">
-        <div class="ai-panel-header">
-          <div class="ai-panel-title">AI meal assistant</div>
-          <span class="ai-badge">Smart suggestions</span>
-        </div>
-        <div class="preset-grid">
-          <button type="button" class="preset-pill" data-preset="Suggest a high-protein meal plan for 2 adults this week">High protein week</button>
-          <button type="button" class="preset-pill" data-preset="Suggest quick meals under 20 minutes for every day">Quick meals only</button>
-          <button type="button" class="preset-pill" data-preset="Make Monday to Wednesday fully vegan-friendly">Vegan Mon–Wed</button>
-          <button type="button" class="preset-pill" data-preset="Suggest kid-friendly dinners every night this week">Kid-friendly dinners</button>
-          <button type="button" class="preset-pill" data-preset="Suggest low-carb breakfasts for every day this week">Low-carb breakfasts</button>
-          <button type="button" class="preset-pill" data-preset="Suggest seasonal Dutch produce meals for this week">Seasonal &amp; local</button>
-          <button type="button" class="preset-pill" data-preset="Suggest gluten-free meals for the whole week">Gluten-free week</button>
-          <button type="button" class="preset-pill" data-preset="Suggest budget-friendly meals under €5 per meal">Budget meals</button>
-        </div>
-        <div class="ai-input-row">
-          <input type="text" id="ai-input" placeholder="e.g. 'No nuts, 2 adults + 1 child, prefer Italian cuisine'…"/>
-          <button type="button" class="ai-send" id="ai-send">Send</button>
-        </div>
-        <div class="diet-block">
-          <div class="toolbar-label diet-block-title">Your diet profile</div>
-          <p class="diet-block-hint">Saved to your account — used for recommendations.</p>
-          <div id="tagChecklist" class="tag-list"></div>
-          <div class="diet-actions">
-            <button type="button" class="ai-send" id="savePrefsBtn">Save preferences</button>
-            <span id="saveState" class="save-state"></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="week-nav">
-        <span class="week-label" id="week-label">Week of 7 Apr 2026</span>
-        <button type="button" class="week-shift-btn" id="week-prev">← Previous</button>
-        <button type="button" class="week-shift-btn" id="week-next">Next →</button>
-      </div>
-      <p class="planner-basket-hint">Each slot starts empty — <strong>Add item</strong> opens the recipe list; <strong>Try new</strong> picks a suggestion (your team can plug in a custom recommender in code). On a filled card, use <strong>Add to basket</strong> to price ingredients.</p>
-
-      <div class="planner-wrap">
-        <div class="planner-grid" id="planner-grid">
-          <div class="col-head col-head-corner"></div>
-          <div class="col-head meal-head" data-meal-head="breakfast">Breakfast</div>
-          <div class="col-head meal-head" data-meal-head="lunch">Lunch</div>
-          <div class="col-head meal-head" data-meal-head="dinner">Dinner</div>
-        </div>
-      </div>
-    </div>
-
-    <main id="panel-items" class="app-panel hidden">
-      <div class="panel-inner">
-        <h2 class="panel-title">Items</h2>
-        <p class="panel-desc">Browse by category like in the shop. Add products to your basket; recipes are for inspiration — add meals to your basket from <strong>This week</strong>.</p>
-        <div class="panel-search-row">
-          <input type="search" id="itemsSearch" class="ai-input-row input-full" placeholder="Search items, categories, or recipes…"/>
-        </div>
-        <div id="itemsGrid" class="items-catalog"></div>
-      </div>
-    </main>
-
-    <main id="panel-basket" class="app-panel hidden">
-      <div class="panel-inner">
-        <h2 class="panel-title">Basket</h2>
-        <div id="cartList" class="basket-list"></div>
-        <div class="basket-order-row">
-          <label class="auth-label" for="deliverySelect">Delivery slot</label>
-          <select id="deliverySelect" class="auth-input"></select>
-          <button type="button" class="checkout-btn" id="createOrderBtn">Place order</button>
-        </div>
-        <pre id="orderResult" class="order-result">No order yet.</pre>
-      </div>
-    </main>
-
-    <main id="panel-history" class="app-panel hidden">
-      <div class="panel-inner">
-        <h2 class="panel-title">Order history</h2>
-        <div id="ordersList" class="basket-list"></div>
-      </div>
-    </main>
-
-    <div id="recipePickModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="recipePickTitle">
-      <div class="modal-backdrop" data-close-modal tabindex="-1" aria-hidden="true"></div>
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <h3 id="recipePickTitle">Add item</h3>
-          <button type="button" class="modal-close" data-close-modal aria-label="Close">×</button>
-        </div>
-        <p class="modal-hint" id="recipePickSubtitle">Choose a recipe for this meal slot.</p>
-        <ul id="recipePickList" class="recipe-pick-list"></ul>
-      </div>
-    </div>
-
-    <div class="footer-bar">
-      <div class="recurring-section">
-        <span class="rec-label">Recurring</span>
-        <div class="rec-item low"><span class="status-dot dot-low"></span><span class="rec-name">Toilet paper</span></div>
-        <div class="rec-item low"><span class="status-dot dot-low"></span><span class="rec-name">Coffee beans</span></div>
-        <div class="rec-item"><span class="status-dot dot-ok"></span><span class="rec-name">Oat milk</span></div>
-        <div class="rec-item"><span class="status-dot dot-ok"></span><span class="rec-name">Olive oil</span></div>
-        <div class="rec-item"><span class="status-dot dot-ok"></span><span class="rec-name">Eggs × 12</span></div>
-        <div class="rec-item"><span class="status-dot dot-ok"></span><span class="rec-name">Sea salt</span></div>
-      </div>
-      <div class="checkout-area">
-        <div class="total-block">
-          <span class="total-label">Basket total</span>
-          <span class="total-amount" id="total-display">€0.00</span>
-        </div>
-        <button type="button" class="checkout-btn" id="footer-checkout">Checkout →</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="./app.js"></script>
-</body>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

@@ -15,7 +15,7 @@ def _hash_password(password: str) -> str:
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
-DB_PATH = ROOT_DIR / "picnic_data.db"
+DB_PATH = DATA_DIR / "picnic_data.db"
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
