@@ -215,3 +215,5 @@ Data_models_Q-Hackathon_2026.pdf
 
 # Figma — binary exports are often 50–100MB+; keep local or use Git LFS / Figma links
 *.fig
+
+*.db
