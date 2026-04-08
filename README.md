@@ -1,2 +1,6 @@
 # Claude-9-Q-hack
-Repo for Q hack 2026
+This is the backend of our Hackathon project. 
+
+We're building a "Shopping Assistant" that uses a calendar and enables ppl to plan their groceries a week ahead. 
+
+We start with a POC
