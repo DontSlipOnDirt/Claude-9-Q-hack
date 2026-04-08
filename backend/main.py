@@ -117,7 +117,7 @@ ONBOARDING_QUESTIONS: list[dict[str, Any]] = [
         "id": "q-lifestyle",
         "question": "Do you follow any lifestyle or religious preferences?",
         "type": "multi_select",
-        "tag_codes": ["halal", "vegetarian"],
+        "tag_codes": ["halal", "vegetarian", "vegan"],
     },
 ]
 
