@@ -6,7 +6,7 @@ import urllib.error
 import uuid
 from datetime import date as date_type
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +16,11 @@ from starlette.staticfiles import StaticFiles
 
 from backend.config import DB_PATH, FRONTEND_DIR, OPENAI_ENV_PATH
 from backend.db import Db
+from backend.services.basket_recommender import (
+    build_dish_recommendations,
+    build_unified_weekly_recommendations,
+    build_weekly_basket_recommendations,
+)
 from backend.services.match_dishes import load_env_file, match_dishes
 from backend.services.shopping_basket import build_shopping_basket
 
@@ -555,6 +560,60 @@ def get_customer_shopping_basket(
         return build_shopping_basket(db, customer_id, reference_date=ref)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/customers/{customer_id}/weekly-recommendations")
+def get_customer_weekly_recommendations(
+    customer_id: str,
+    mode: Literal["groceries", "dishes", "both"] = Query(
+        "groceries",
+        description="groceries=articles; dishes=recipes; both=combined payload",
+    ),
+    date: str | None = Query(
+        None,
+        description="Reference date for the planned week (YYYY-MM-DD); default UTC today",
+    ),
+    novelty_slots: int = Query(
+        5,
+        ge=0,
+        le=50,
+        description="Max discovery items with no/low purchase history",
+    ),
+) -> dict[str, Any]:
+    """
+    Weekly basket recommender: essentials, seven-day plan, and discovery items.
+
+    Same logic as ``scripts/recommend_weekly_basket.py`` (JSON shape matches CLI
+    ``--json``). For simple preference-tag ranking of catalog items, use
+    ``GET /api/recommendations/{customer_id}`` instead.
+    """
+    row = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    ref: date_type | None = None
+    if date is not None and date.strip():
+        try:
+            ref = date_type.fromisoformat(date.strip())
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid date; use YYYY-MM-DD"
+            ) from e
+
+    if mode == "groceries":
+        return build_weekly_basket_recommendations(
+            db, customer_id, reference_date=ref, novelty_slots=novelty_slots
+        )
+    if mode == "dishes":
+        return build_dish_recommendations(
+            db, customer_id, reference_date=ref, novelty_slots=novelty_slots
+        )
+    return build_unified_weekly_recommendations(
+        db,
+        customer_id,
+        reference_date=ref,
+        novelty_slots=novelty_slots,
+        mode="both",
+    )
 
 
 FRONTEND_DIST = FRONTEND_DIR / "dist"

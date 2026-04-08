@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import urllib.error
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.responses import FileResponse
 
+from backend.config import OPENAI_ENV_PATH
+from backend.services.match_dishes import load_env_file, match_dishes
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT_DIR / "data" / "picnic_data.db"
+DB_PATH = ROOT_DIR / "picnic_data.db"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
 
@@ -103,6 +106,11 @@ class ShoppingFromMealsBody(BaseModel):
     meals: list[MealPlanSlot]
 
 
+class MatchDishesBody(BaseModel):
+    query: str
+    model: str | None = None
+
+
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac(
@@ -146,13 +154,14 @@ ONBOARDING_QUESTIONS: list[dict[str, Any]] = [
 def _ensure_db_exists() -> None:
     if not DB_PATH.exists():
         raise RuntimeError(
-            f"Database not found at {DB_PATH}. Run data/build_sqlite_db.py first."
+            f"Database not found at {DB_PATH}. Run scripts/build_sqlite_db.py first."
         )
 
 
 @app.on_event("startup")
 def startup_check() -> None:
     _ensure_db_exists()
+    load_env_file(str(OPENAI_ENV_PATH))
 
 
 @app.get("/api/health")
@@ -294,6 +303,26 @@ def article_detail(sku: str) -> dict[str, Any]:
 @app.get("/api/catalog/recipes")
 def list_recipes() -> list[dict[str, Any]]:
     return db.rows("SELECT * FROM recipes ORDER BY name")
+
+
+@app.post("/api/catalog/match-dishes")
+def post_match_dishes(body: MatchDishesBody) -> dict[str, Any]:
+    """Natural-language dish search over the recipe catalog (OpenAI). Same as ``scripts/match_dishes.py``."""
+    q = body.query.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="query must not be empty")
+    try:
+        return match_dishes(db, q, model=body.model)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        raise HTTPException(
+            status_code=502,
+            detail={"openai_status": e.code, "body": err_body},
+        ) from e
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=502, detail=str(e.reason)) from e
 
 
 @app.post("/api/catalog/shopping-from-meals")
