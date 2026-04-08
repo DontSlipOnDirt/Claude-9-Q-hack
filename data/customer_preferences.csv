@@ -1,5 +1,0 @@
-customer_id,tag_id,preference_level,source,created_at
-a1b2c3d4-e5f6-7890-1234-567890abcdef,90111111-aaaa-4bbb-8ccc-111111111111,avoid,onboarding,2026-04-08T15:55:00Z
-a1b2c3d4-e5f6-7890-1234-567890abcdef,90222222-bbbb-4ccc-8ddd-222222222222,prefer,onboarding,2026-04-08T15:55:00Z
-b1c2d3e4-f5a6-7890-1234-567890abcdef,90333333-cccc-4ddd-8eee-333333333333,required,onboarding,2026-04-08T15:57:00Z
-c1d2e3f4-a5b6-7890-1234-567890abcdef,90444444-dddd-4eee-8fff-444444444444,prefer,manual_update,2026-04-08T16:01:00Z
