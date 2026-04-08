@@ -4,14 +4,24 @@ import hashlib
 import secrets
 import sqlite3
 import uuid
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.responses import FileResponse
+
+from backend.voice.voice import (
+    has_actual_words,
+    log_conversation_event,
+    normalize_command,
+    synthesize_with_elevenlabs,
+    transcribe_with_elevenlabs,
+)
+from backend.voice.voice_agent import GroceryVoiceAgent
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -46,6 +56,7 @@ class Db:
 
 
 db = Db(DB_PATH)
+voice_agent = GroceryVoiceAgent(db)
 app = FastAPI(title="Picnic Q-Hack API", version="0.1.0")
 
 app.add_middleware(
@@ -525,6 +536,91 @@ def list_customer_orders(customer_id: str) -> list[dict[str, Any]]:
         """,
         (customer_id,),
     )
+
+
+@app.post("/api/voice/turn")
+async def voice_turn(
+    customer_id: str = Form(...),
+    conversation_id: str | None = Form(None),
+    audio: UploadFile = File(...),
+) -> dict[str, Any]:
+    customer = db.row("SELECT id, name FROM customers WHERE id = ?", (customer_id,))
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio payload is empty")
+
+    content_type = audio.content_type or "audio/webm"
+    try:
+        transcript = transcribe_with_elevenlabs(
+            audio_bytes,
+            filename=audio.filename or "voice.webm",
+            content_type=content_type,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"STT failed: {exc}") from exc
+
+    if not transcript or not has_actual_words(transcript):
+        return {
+            "ignored": True,
+            "reason": "No clear words detected.",
+            "conversation_id": conversation_id,
+        }
+
+    normalized = normalize_command(transcript)
+    if normalized == "ok":
+        cid = conversation_id or str(uuid.uuid4())
+        log_conversation_event(cid, "user", transcript)
+        log_conversation_event(cid, "assistant", "Interrupted.")
+        return {
+            "conversation_id": cid,
+            "transcript": transcript,
+            "spoken_summary": "Interrupted.",
+            "order_draft": [],
+            "interruption": True,
+            "audio_b64": "",
+            "audio_mime": "audio/mpeg",
+        }
+
+    try:
+        turn = voice_agent.run_turn(
+            customer_id=customer_id,
+            transcript=transcript,
+            conversation_id=conversation_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Reasoning agent failed: {exc}") from exc
+
+    cid = str(turn["conversation_id"])
+    spoken_summary = str(turn.get("spoken_summary", "I can help plan your basket.")).strip()
+    if not has_actual_words(spoken_summary):
+        spoken_summary = "I updated your grocery plan."
+
+    try:
+        tts_audio = synthesize_with_elevenlabs(spoken_summary)
+        audio_b64 = base64.b64encode(tts_audio).decode("ascii")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"TTS failed: {exc}") from exc
+
+    log_conversation_event(cid, "user", transcript, extra={"customer_id": customer_id})
+    log_conversation_event(
+        cid,
+        "assistant",
+        spoken_summary,
+        extra={"order_draft_items": len(turn.get("order_draft", []))},
+    )
+
+    return {
+        "conversation_id": cid,
+        "transcript": transcript,
+        "spoken_summary": spoken_summary,
+        "order_draft": turn.get("order_draft", []),
+        "notes": turn.get("notes", ""),
+        "audio_b64": audio_b64,
+        "audio_mime": "audio/mpeg",
+    }
 
 
 def _frontend_file(name: str) -> Path:

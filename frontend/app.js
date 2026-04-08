@@ -79,6 +79,23 @@ const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ meals }),
     }),
+  voiceTurn: async ({ customerId, conversationId, audioBlob }) => {
+    const form = new FormData();
+    form.append("customer_id", customerId);
+    if (conversationId) form.append("conversation_id", conversationId);
+    form.append("audio", audioBlob, "voice.webm");
+    const r = await fetch("/api/voice/turn", { method: "POST", body: form });
+    let data = {};
+    try {
+      data = await r.json();
+    } catch {
+      /* ignore */
+    }
+    if (!r.ok) {
+      throw new Error(data.detail || "Voice request failed");
+    }
+    return data;
+  },
 };
 
 const state = {
@@ -105,6 +122,14 @@ const state = {
   inBasket: {},
   weekOffset: 0,
   appNav: "planner",
+  voiceConversationId: null,
+  voiceRecorder: null,
+  voiceStream: null,
+  voiceChunks: [],
+  voiceAudio: null,
+  isVoiceRecording: false,
+  isVoiceSpeaking: false,
+  interruptRecognition: null,
 };
 
 function pickBadgeFromRecipe(recipe) {
@@ -408,11 +433,21 @@ function setAuthMessage(text, isError) {
 }
 
 function showAuth() {
+  if (state.isVoiceRecording) stopVoiceRecording();
+  if (state.voiceAudio) {
+    state.voiceAudio.pause();
+    state.voiceAudio = null;
+  }
+  stopInterruptListener();
+  state.isVoiceSpeaking = false;
   document.getElementById("auth-gate").classList.remove("hidden");
   document.getElementById("app-root").classList.add("hidden");
   state.currentCustomer = null;
   state.selectedCustomer = null;
   state.plannerCustomerId = null;
+  state.voiceConversationId = null;
+  setVoiceStatus("Idle");
+  syncVoiceButtonUI();
 }
 
 function setAvatarInitials(name) {
@@ -431,6 +466,8 @@ async function enterApp(customer) {
   document.getElementById("auth-gate").classList.add("hidden");
   document.getElementById("app-root").classList.remove("hidden");
   setAuthMessage("");
+  setVoiceStatus("Idle");
+  syncVoiceButtonUI();
   await loadAppData();
 }
 
@@ -766,6 +803,211 @@ async function placeOrder() {
   switchAppNav("history");
 }
 
+function setVoiceStatus(message) {
+  const el = document.getElementById("voiceStatus");
+  if (el) el.textContent = message;
+}
+
+function syncVoiceButtonUI() {
+  const btn = document.getElementById("voiceBtn");
+  if (!btn) return;
+  btn.classList.toggle("is-recording", state.isVoiceRecording);
+  btn.classList.toggle("is-speaking", state.isVoiceSpeaking);
+  btn.setAttribute("aria-pressed", state.isVoiceRecording ? "true" : "false");
+  if (state.isVoiceRecording) btn.textContent = "Stop";
+  else if (state.isVoiceSpeaking) btn.textContent = "Speaking";
+  else btn.textContent = "Voice";
+}
+
+function stopInterruptListener() {
+  if (!state.interruptRecognition) return;
+  try {
+    state.interruptRecognition.onresult = null;
+    state.interruptRecognition.onerror = null;
+    state.interruptRecognition.onend = null;
+    state.interruptRecognition.stop();
+  } catch {
+    /* ignore */
+  }
+  state.interruptRecognition = null;
+}
+
+function startInterruptListener() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR || !state.isVoiceSpeaking) return;
+
+  const recognition = new SR();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = "en-US";
+  state.interruptRecognition = recognition;
+
+  recognition.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = (event.results[i][0]?.transcript || "")
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, " ")
+        .trim();
+      if (!transcript) continue;
+      const words = transcript.split(/\s+/).filter(Boolean);
+      if (words.length === 1 && words[0] === "ok") {
+        if (state.voiceAudio) {
+          state.voiceAudio.pause();
+          state.voiceAudio.currentTime = 0;
+        }
+        state.isVoiceSpeaking = false;
+        setVoiceStatus("Interrupted");
+        syncVoiceButtonUI();
+        stopInterruptListener();
+        return;
+      }
+    }
+  };
+
+  recognition.onend = () => {
+    if (state.isVoiceSpeaking) {
+      try {
+        recognition.start();
+      } catch {
+        stopInterruptListener();
+      }
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch {
+    stopInterruptListener();
+  }
+}
+
+async function playVoiceAudio(audioB64, mime = "audio/mpeg") {
+  if (!audioB64) return;
+  const bin = atob(audioB64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mime });
+  const url = URL.createObjectURL(blob);
+
+  if (state.voiceAudio) {
+    state.voiceAudio.pause();
+    state.voiceAudio = null;
+  }
+
+  const audio = new Audio(url);
+  state.voiceAudio = audio;
+  state.isVoiceSpeaking = true;
+  setVoiceStatus("Speaking… say 'ok' to interrupt");
+  syncVoiceButtonUI();
+  startInterruptListener();
+
+  audio.onended = () => {
+    state.isVoiceSpeaking = false;
+    setVoiceStatus("Idle");
+    syncVoiceButtonUI();
+    stopInterruptListener();
+    URL.revokeObjectURL(url);
+  };
+  audio.onerror = () => {
+    state.isVoiceSpeaking = false;
+    setVoiceStatus("Audio failed");
+    syncVoiceButtonUI();
+    stopInterruptListener();
+    URL.revokeObjectURL(url);
+  };
+
+  await audio.play();
+}
+
+async function sendVoiceTurn(audioBlob) {
+  if (!state.selectedCustomer) {
+    setVoiceStatus("Log in first");
+    return;
+  }
+  setVoiceStatus("Thinking…");
+
+  const result = await api.voiceTurn({
+    customerId: state.selectedCustomer,
+    conversationId: state.voiceConversationId,
+    audioBlob,
+  });
+
+  if (result.conversation_id) {
+    state.voiceConversationId = result.conversation_id;
+  }
+  if (result.ignored) {
+    setVoiceStatus("No clear speech detected");
+    return;
+  }
+
+  if (typeof result.spoken_summary === "string" && result.spoken_summary) {
+    console.info("Voice summary:", result.spoken_summary);
+  }
+  await playVoiceAudio(result.audio_b64 || "", result.audio_mime || "audio/mpeg");
+}
+
+async function startVoiceRecording() {
+  if (state.isVoiceRecording) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+    ? "audio/webm;codecs=opus"
+    : "audio/webm";
+
+  const recorder = new MediaRecorder(stream, { mimeType });
+  state.voiceStream = stream;
+  state.voiceRecorder = recorder;
+  state.voiceChunks = [];
+  state.isVoiceRecording = true;
+  setVoiceStatus("Listening… tap Stop when done");
+  syncVoiceButtonUI();
+
+  recorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) state.voiceChunks.push(event.data);
+  };
+
+  recorder.onstop = async () => {
+    state.isVoiceRecording = false;
+    syncVoiceButtonUI();
+    const tracks = state.voiceStream?.getTracks() || [];
+    tracks.forEach((t) => t.stop());
+    state.voiceStream = null;
+
+    const audioBlob = new Blob(state.voiceChunks, { type: "audio/webm" });
+    state.voiceChunks = [];
+    if (!audioBlob.size) {
+      setVoiceStatus("No audio captured");
+      return;
+    }
+
+    try {
+      await sendVoiceTurn(audioBlob);
+    } catch (err) {
+      setVoiceStatus("Voice failed");
+      console.error(err);
+    }
+  };
+
+  recorder.start();
+}
+
+function stopVoiceRecording() {
+  if (!state.voiceRecorder || state.voiceRecorder.state !== "recording") return;
+  state.voiceRecorder.stop();
+}
+
+async function toggleVoiceRecording() {
+  if (state.isVoiceRecording) {
+    stopVoiceRecording();
+    return;
+  }
+  try {
+    await startVoiceRecording();
+  } catch (err) {
+    setVoiceStatus("Microphone permission denied");
+    console.error(err);
+  }
+}
+
 /* Event wiring */
 document.querySelectorAll(".auth-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -829,6 +1071,9 @@ document.getElementById("refreshBtn").addEventListener("click", () => {
 });
 
 document.getElementById("ai-toggle").addEventListener("click", toggleAI);
+document.getElementById("voiceBtn").addEventListener("click", () => {
+  toggleVoiceRecording().catch(console.error);
+});
 
 document.querySelectorAll(".preset-pill").forEach((btn) => {
   btn.addEventListener("click", () =>

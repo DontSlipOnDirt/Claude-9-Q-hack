@@ -6,5 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
+    "pyaudio>=0.2.14",
+    "python-multipart>=0.0.20",
+    "python-dotenv>=1.1.1",
+    "requests>=2.32.5",
     "uvicorn",
+    "speechrecognition>=3.16.0",
 ]
