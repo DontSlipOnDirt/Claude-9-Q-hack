@@ -11,7 +11,9 @@ const COLORS = ["hsl(145, 63%, 42%)", "hsl(0, 70%, 55%)", "hsl(35, 85%, 55%)", "
 
 const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
   const stats = useMemo(() => {
-    const selected = mealPlan.flatMap((d) => d.meals).filter((m) => m.selected);
+    const selected = mealPlan
+      .flatMap((d) => d.meals)
+      .filter((m) => m.selected && m.category !== "extras");
     const count = selected.length;
     if (count === 0) return null;
 

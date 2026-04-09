@@ -104,9 +104,16 @@ const CheckoutPage = ({ onBack, deliverySlot, onSelectSlot, basketIngredients, r
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Ingredients ({basketIngredients.length})</p>
               {basketIngredients.map((item) => (
                 <div key={item.id} className="flex items-center justify-between py-1.5 text-sm gap-2">
-                  <span className="text-foreground flex items-center gap-1.5 min-w-0">
-                    <OrderLineImage image={item.image} />
-                    <span className="truncate">{item.name} × {item.quantity}</span>
+                  <span className="text-foreground flex flex-col min-w-0 gap-0.5">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <OrderLineImage image={item.image} />
+                      <span className="truncate">{item.name} × {item.quantity}</span>
+                    </span>
+                    {(item.sourceLabel ?? item.fromMeal) && (
+                      <span className="text-[11px] text-muted-foreground pl-6 truncate">
+                        {item.sourceLabel ?? item.fromMeal}
+                      </span>
+                    )}
                   </span>
                   <span className="font-medium text-foreground shrink-0">{(item.price * item.quantity).toFixed(2).replace(".", ",")} €</span>
                 </div>

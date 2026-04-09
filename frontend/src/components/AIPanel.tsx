@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Send, Sparkles, Mic, MicOff } from "lucide-react";
-import { matchDishes } from "@/lib/api";
 
 const presets = [
   { label: "High protein week", prompt: "Suggest a high-protein meal plan for this week" },
@@ -10,40 +9,21 @@ const presets = [
 
 interface AIPanelProps {
   isOpen: boolean;
+  loading: boolean;
+  onSubmitPrompt: (text: string) => void;
 }
 
-const AIPanel = ({ isOpen }: AIPanelProps) => {
+const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
   const [input, setInput] = useState("");
-  const [message, setMessage] = useState("");
   const [voiceActive, setVoiceActive] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const send = async (text: string) => {
+  const send = (text: string) => {
     const q = text.trim();
-    if (!q) return;
-    setLoading(true);
+    if (!q || loading) return;
     setInput("");
-    setMessage("");
-    try {
-      const res = await matchDishes(q);
-      const lines = (res.matches || []).map((m) => `• ${m.name}${m.reason ? ` — ${m.reason}` : ""}`);
-      setMessage(
-        lines.length
-          ? `Matches from your catalog:\n${lines.join("\n")}`
-          : "No strong matches in the catalog — try different wording."
-      );
-    } catch (e) {
-      const err = e instanceof Error ? e.message : String(e);
-      setMessage(
-        err.includes("503") || err.toLowerCase().includes("openai")
-          ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or check API logs."
-          : `Could not reach match-dishes: ${err.slice(0, 200)}`
-      );
-    } finally {
-      setLoading(false);
-    }
+    onSubmitPrompt(q);
   };
 
   return (
@@ -108,9 +88,12 @@ const AIPanel = ({ isOpen }: AIPanelProps) => {
             <Send className="w-4 h-4" />
           </button>
         </div>
-        {loading && <p className="mt-2 text-sm text-muted-foreground">Matching against your recipe catalog…</p>}
-        {message && (
-          <p className="mt-2 text-sm text-accent font-medium whitespace-pre-line">{message}</p>
+        {loading ? (
+          <p className="mt-2 text-sm text-muted-foreground">Matching against your recipe catalog…</p>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Dish suggestions appear in the AI suggestions section below. Your grocery list stays in Week groceries under the planner.
+          </p>
         )}
       </div>
     </div>
