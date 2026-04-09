@@ -4,11 +4,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import Any
 
 from backend.db import Db
+
+# Prefer at least this many suggestions when the catalog has enough recipes (UI + user expectations).
+_MIN_SUGGESTIONS = 6
+_MAX_SUGGESTIONS = 12
+
+_STOPWORDS = frozenset(
+    """
+    a an the for with and or to of in on at as by from into over under up down some any
+    want like something me my i we you quick easy fast recipe dish meal food make cook
+    need looking ideas idea help please can could would should
+    """.split()
+)
 
 
 def estimate_recipe_meal_price(db: Db, recipe_id: str) -> float:
@@ -98,13 +111,134 @@ User is looking for dishes that match this description (cuisine, ingredients, st
 "{user_query}"
 
 Task:
-- Pick every dish from the catalog that plausibly matches what the user wants. Include close matches (same protein + starch + region/style) even if not a perfect keyword match.
+- Pick dishes from the catalog that plausibly match what the user wants. Be generous: include partial matches (similar protein, starch, cooking method, or cuisine style) even when wording differs.
+- Prefer recipes whose description or implied ingredients align with the request; if the catalog has no exact cuisine, suggest the closest alternatives (e.g. another curry, pasta, salad, or rice dish).
 - Order results from best match to weaker match.
-- If nothing fits well, return an empty matches list.
+- Return at least 3 distinct recipes from the catalog whenever the request is about food, meals, ingredients, dietary style, or cooking — unless the catalog is empty.
+- Only return an empty matches list if the user message is clearly not a food/meal request (e.g. pure gibberish or unrelated topic).
 
 Respond with a single JSON object (no markdown fences) with this exact shape:
 {{"matches":[{{"id":"<uuid from catalog>","name":"<name from catalog>","reason":"<one short sentence why it fits>"}}]}}
 """
+
+
+def _tokenize_query(user_query: str) -> list[str]:
+    raw = re.findall(r"[a-z0-9]+", user_query.lower())
+    out: list[str] = []
+    for t in raw:
+        if len(t) < 2 or t in _STOPWORDS:
+            continue
+        out.append(t)
+    return out
+
+
+def _recipe_rows_for_lexical(db: Db) -> list[dict[str, Any]]:
+    return db.rows(
+        """
+        SELECT r.id, r.name, r.description,
+               COALESCE(GROUP_CONCAT(DISTINCT i.name), '') AS ing,
+               COALESCE(GROUP_CONCAT(DISTINCT pt.name), '') AS tags
+        FROM recipes r
+        LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+        LEFT JOIN ingredients i ON i.id = ri.ingredient_id
+        LEFT JOIN recipe_tags rt ON rt.recipe_id = r.id
+        LEFT JOIN preference_tags pt ON pt.id = rt.tag_id
+        GROUP BY r.id
+        """
+    )
+
+
+def lexical_fallback_matches(
+    db: Db,
+    user_query: str,
+    *,
+    limit: int,
+    exclude: set[str],
+) -> list[dict[str, Any]]:
+    """
+    Keyword-style matches over name, description, ingredients, and tag labels.
+    Used when the model returns too few rows or hallucinated ids.
+    """
+    if limit <= 0:
+        return []
+    rows = _recipe_rows_for_lexical(db)
+    tokens = _tokenize_query(user_query)
+    scored: list[tuple[int, str, dict[str, Any]]] = []
+    for row in rows:
+        rid = str(row["id"])
+        if rid in exclude:
+            continue
+        blob = " ".join(
+            str(row.get(k) or "") for k in ("name", "description", "ing", "tags")
+        ).lower()
+        if tokens:
+            score = sum(1 for tok in tokens if tok in blob)
+        else:
+            score = 0
+        name = str(row.get("name") or "")
+        scored.append((score, name, row))
+    scored.sort(key=lambda x: (-x[0], x[1].lower()))
+    out: list[dict[str, Any]] = []
+    for score, _name, row in scored:
+        rid = str(row["id"])
+        if rid in exclude:
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        if tokens and score > 0:
+            reason = "Matched your search in the catalog (name, ingredients, or description)."
+        else:
+            reason = "From your catalog — add keywords (ingredients, cuisine) to narrow results."
+        out.append({"id": rid, "name": name, "reason": reason})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _merge_llm_matches_with_fallback(
+    db: Db,
+    user_query: str,
+    raw_matches: list[Any],
+    valid_ids: set[str],
+    id_to_name: dict[str, str],
+) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_matches:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id", "")).strip()
+        if rid not in valid_ids or rid in seen:
+            continue
+        seen.add(rid)
+        name = str(item.get("name", "")).strip() or id_to_name.get(rid, "")
+        reason = str(item.get("reason", "")).strip()
+        if not name:
+            name = id_to_name.get(rid, "")
+        cleaned.append(
+            {
+                "id": rid,
+                "name": name,
+                **({"reason": reason} if reason else {}),
+            }
+        )
+
+    if len(cleaned) >= _MIN_SUGGESTIONS:
+        return cleaned[:_MAX_SUGGESTIONS]
+
+    need = min(_MAX_SUGGESTIONS, max(0, _MIN_SUGGESTIONS - len(cleaned)))
+    extra = lexical_fallback_matches(db, user_query, limit=need, exclude=seen)
+    for row in extra:
+        rid = str(row["id"])
+        if rid in seen:
+            continue
+        seen.add(rid)
+        cleaned.append(row)
+        if len(cleaned) >= _MIN_SUGGESTIONS:
+            break
+
+    return cleaned[:_MAX_SUGGESTIONS]
 
 
 def call_openai(api_key: str, model: str, user_content: str) -> dict[str, Any]:
@@ -154,12 +288,18 @@ def match_dishes(
         )
     m = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     result = call_openai(api_key, m, prompt)
-    matches = result.get("matches")
-    if isinstance(matches, list):
-        for item in matches:
-            if not isinstance(item, dict):
-                continue
-            rid = str(item.get("id", "")).strip()
-            if rid:
-                item["estimated_price"] = estimate_recipe_meal_price(db, rid)
+    raw = result.get("matches")
+    if not isinstance(raw, list):
+        raw = []
+    id_rows = db.rows("SELECT id, name FROM recipes")
+    valid_ids = {str(r["id"]) for r in id_rows}
+    id_to_name = {str(r["id"]): str(r["name"] or "") for r in id_rows}
+    merged = _merge_llm_matches_with_fallback(
+        db, user_query.strip(), raw, valid_ids, id_to_name
+    )
+    result["matches"] = merged
+    for item in merged:
+        rid = str(item.get("id", "")).strip()
+        if rid:
+            item["estimated_price"] = estimate_recipe_meal_price(db, rid)
     return result
