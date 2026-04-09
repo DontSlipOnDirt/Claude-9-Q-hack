@@ -11,7 +11,18 @@ interface RecipeDetailProps {
   preparation: string[];
   ingredients: Ingredient[];
   onBack: () => void;
-  onAddToBasket: (ingredients: { id: string; name: string; brand: string; price: number; weight: string; image: string; quantity: number }[]) => void;
+  onAddToBasket: (
+    ingredients: {
+      id: string;
+      name: string;
+      brand: string;
+      price: number;
+      weight: string;
+      image: string;
+      quantity: number;
+      catalogSku?: string;
+    }[]
+  ) => void;
   onToggleFavourite: (id: string) => void;
   isFavourite: boolean;
   mealId: string;
@@ -38,9 +49,18 @@ const RecipeDetail = ({ title, subtitle, heroEmoji, calories, prepTime, preparat
   const currentTotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
   const handleAddToBasket = () => {
-    const toAdd = items.filter((i) => i.quantity > 0).map((i) => ({
-      id: i.id, name: i.name, brand: i.brand, price: i.price, weight: i.weight, image: i.image, quantity: i.quantity,
-    }));
+    const toAdd = items
+      .filter((i) => i.quantity > 0)
+      .map((i) => ({
+        id: i.catalogSku ?? i.id,
+        name: i.name,
+        brand: i.brand,
+        price: i.price,
+        weight: i.weight,
+        image: i.image,
+        quantity: i.quantity,
+        catalogSku: i.catalogSku,
+      }));
     onAddToBasket(toAdd);
     setAddedToBasket(true);
   };

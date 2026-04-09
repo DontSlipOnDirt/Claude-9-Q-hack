@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import urllib.error
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.responses import FileResponse
 
+from backend.config import OPENAI_ENV_PATH
+from backend.services.match_dishes import load_env_file, match_dishes
+from backend.services.shopping_from_meal_plan import build_shopping_from_meals
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT_DIR / "data" / "picnic_data.db"
+DB_PATH = ROOT_DIR / "picnic_data.db"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
 
@@ -103,6 +107,11 @@ class ShoppingFromMealsBody(BaseModel):
     meals: list[MealPlanSlot]
 
 
+class MatchDishesBody(BaseModel):
+    query: str
+    model: str | None = None
+
+
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac(
@@ -146,13 +155,14 @@ ONBOARDING_QUESTIONS: list[dict[str, Any]] = [
 def _ensure_db_exists() -> None:
     if not DB_PATH.exists():
         raise RuntimeError(
-            f"Database not found at {DB_PATH}. Run data/build_sqlite_db.py first."
+            f"Database not found at {DB_PATH}. Run scripts/build_sqlite_db.py first."
         )
 
 
 @app.on_event("startup")
 def startup_check() -> None:
     _ensure_db_exists()
+    load_env_file(str(OPENAI_ENV_PATH))
 
 
 @app.get("/api/health")
@@ -296,62 +306,34 @@ def list_recipes() -> list[dict[str, Any]]:
     return db.rows("SELECT * FROM recipes ORDER BY name")
 
 
+@app.post("/api/catalog/match-dishes")
+def post_match_dishes(body: MatchDishesBody) -> dict[str, Any]:
+    """Natural-language dish search over the recipe catalog (OpenAI). Same as ``scripts/match_dishes.py``."""
+    q = body.query.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="query must not be empty")
+    try:
+        return match_dishes(db, q, model=body.model)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        raise HTTPException(
+            status_code=502,
+            detail={"openai_status": e.code, "body": err_body},
+        ) from e
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=502, detail=str(e.reason)) from e
+
+
 @app.post("/api/catalog/shopping-from-meals")
 def shopping_from_meals(body: ShoppingFromMealsBody) -> dict[str, Any]:
     """
     Expand planned meals into shop lines: recipe -> ingredients -> default article SKUs.
-    Repeating the same recipe (multiple slots) adds ingredient quantities again.
+    Repeating the same recipe (multiple slots) adds ingredient quantities again in ``detail``.
+    ``checkout_lines`` merge by SKU; quantities may be capped per ``articles.meal_plan_checkout_max_qty``.
     """
-    detail: list[dict[str, Any]] = []
-    sku_merge: dict[str, dict[str, Any]] = {}
-
-    for slot in body.meals:
-        rows = db.rows(
-            """
-            SELECT r.name AS recipe_name, ri.quantity AS ingredient_qty,
-                   i.name AS ingredient_name, a.sku, a.name AS article_name,
-                   a.price AS unit_price
-            FROM recipe_ingredients ri
-            JOIN recipes r ON r.id = ri.recipe_id
-            JOIN ingredients i ON i.id = ri.ingredient_id
-            JOIN ingredient_articles ia ON ia.ingredient_id = ri.ingredient_id
-            JOIN articles a ON a.sku = ia.article_sku AND a.is_available = 1
-            WHERE ri.recipe_id = ?
-            ORDER BY i.name
-            """,
-            (slot.recipe_id,),
-        )
-        for row in rows:
-            qty = int(row["ingredient_qty"])
-            unit = float(row["unit_price"])
-            line_total = round(unit * qty, 2)
-            sku = row["sku"]
-            detail.append(
-                {
-                    "meal_label": slot.label,
-                    "recipe_id": slot.recipe_id,
-                    "recipe_name": row["recipe_name"],
-                    "ingredient_name": row["ingredient_name"],
-                    "sku": sku,
-                    "article_name": row["article_name"],
-                    "quantity": qty,
-                    "unit_price": unit,
-                    "line_total": line_total,
-                }
-            )
-            if sku not in sku_merge:
-                sku_merge[sku] = {
-                    "sku": sku,
-                    "article_name": row["article_name"],
-                    "quantity": 0,
-                }
-            sku_merge[sku]["quantity"] += qty
-
-    checkout_lines = [
-        {"sku": v["sku"], "quantity": v["quantity"], "name": v["article_name"]}
-        for v in sku_merge.values()
-    ]
-    return {"detail": detail, "checkout_lines": checkout_lines}
+    return build_shopping_from_meals(db, body.meals)
 
 
 @app.get("/api/deliveries")

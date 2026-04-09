@@ -118,7 +118,7 @@ def match_dishes(
     model: str | None = None,
 ) -> dict[str, Any]:
     """Return OpenAI JSON shape: ``{{"matches": [...]}}``."""
-    catalog = recipes_catalog(db)
+    catalog = recipes_catalog_csv(db)
     prompt = build_prompt(catalog, user_query.strip())
     api_key = os.environ.get("OPENAI_KEY")
     if not api_key:

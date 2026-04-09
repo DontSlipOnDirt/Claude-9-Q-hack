@@ -49,9 +49,17 @@ export type ShoppingDetailRow = {
   line_total: number;
 };
 
+export type ShoppingCheckoutLine = {
+  sku: string;
+  quantity: number;
+  name: string;
+  unit_price: number;
+  line_total: number;
+};
+
 export type ShoppingFromMealsResponse = {
   detail: ShoppingDetailRow[];
-  checkout_lines: { sku: string; quantity: number; name: string }[];
+  checkout_lines: ShoppingCheckoutLine[];
 };
 
 export async function shoppingFromMeals(

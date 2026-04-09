@@ -6,7 +6,7 @@ import urllib.error
 import uuid
 from datetime import date as date_type
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +16,13 @@ from starlette.staticfiles import StaticFiles
 
 from backend.config import DB_PATH, FRONTEND_DIR, OPENAI_ENV_PATH
 from backend.db import Db
+from backend.services.basket_recommender import (
+    build_dish_recommendations,
+    build_unified_weekly_recommendations,
+    build_weekly_basket_recommendations,
+)
 from backend.services.match_dishes import load_env_file, match_dishes
+from backend.services.shopping_from_meal_plan import build_shopping_from_meals
 from backend.services.shopping_basket import build_shopping_basket
 
 
@@ -118,7 +124,7 @@ ONBOARDING_QUESTIONS: list[dict[str, Any]] = [
         "id": "q-lifestyle",
         "question": "Do you follow any lifestyle or religious preferences?",
         "type": "multi_select",
-        "tag_codes": ["halal", "vegetarian"],
+        "tag_codes": ["halal", "vegetarian", "vegan"],
     },
 ]
 
@@ -301,58 +307,10 @@ def post_match_dishes(body: MatchDishesBody) -> dict[str, Any]:
 def shopping_from_meals(body: ShoppingFromMealsBody) -> dict[str, Any]:
     """
     Expand planned meals into shop lines: recipe -> ingredients -> default article SKUs.
-    Repeating the same recipe (multiple slots) adds ingredient quantities again.
+    Repeating the same recipe (multiple slots) adds ingredient quantities again in ``detail``.
+    ``checkout_lines`` merge by SKU; quantities may be capped per ``articles.meal_plan_checkout_max_qty``.
     """
-    detail: list[dict[str, Any]] = []
-    sku_merge: dict[str, dict[str, Any]] = {}
-
-    for slot in body.meals:
-        rows = db.rows(
-            """
-            SELECT r.name AS recipe_name, ri.quantity AS ingredient_qty,
-                   i.name AS ingredient_name, a.sku, a.name AS article_name,
-                   a.price AS unit_price
-            FROM recipe_ingredients ri
-            JOIN recipes r ON r.id = ri.recipe_id
-            JOIN ingredients i ON i.id = ri.ingredient_id
-            JOIN ingredient_articles ia ON ia.ingredient_id = ri.ingredient_id
-            JOIN articles a ON a.sku = ia.article_sku AND a.is_available = 1
-            WHERE ri.recipe_id = ?
-            ORDER BY i.name
-            """,
-            (slot.recipe_id,),
-        )
-        for row in rows:
-            qty = int(row["ingredient_qty"])
-            unit = float(row["unit_price"])
-            line_total = round(unit * qty, 2)
-            sku = row["sku"]
-            detail.append(
-                {
-                    "meal_label": slot.label,
-                    "recipe_id": slot.recipe_id,
-                    "recipe_name": row["recipe_name"],
-                    "ingredient_name": row["ingredient_name"],
-                    "sku": sku,
-                    "article_name": row["article_name"],
-                    "quantity": qty,
-                    "unit_price": unit,
-                    "line_total": line_total,
-                }
-            )
-            if sku not in sku_merge:
-                sku_merge[sku] = {
-                    "sku": sku,
-                    "article_name": row["article_name"],
-                    "quantity": 0,
-                }
-            sku_merge[sku]["quantity"] += qty
-
-    checkout_lines = [
-        {"sku": v["sku"], "quantity": v["quantity"], "name": v["article_name"]}
-        for v in sku_merge.values()
-    ]
-    return {"detail": detail, "checkout_lines": checkout_lines}
+    return build_shopping_from_meals(db, body.meals)
 
 
 @app.get("/api/deliveries")
@@ -555,6 +513,60 @@ def get_customer_shopping_basket(
         return build_shopping_basket(db, customer_id, reference_date=ref)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/customers/{customer_id}/weekly-recommendations")
+def get_customer_weekly_recommendations(
+    customer_id: str,
+    mode: Literal["groceries", "dishes", "both"] = Query(
+        "groceries",
+        description="groceries=articles; dishes=recipes; both=combined payload",
+    ),
+    date: str | None = Query(
+        None,
+        description="Reference date for the planned week (YYYY-MM-DD); default UTC today",
+    ),
+    novelty_slots: int = Query(
+        5,
+        ge=0,
+        le=50,
+        description="Max discovery items with no/low purchase history",
+    ),
+) -> dict[str, Any]:
+    """
+    Weekly basket recommender: essentials, seven-day plan, and discovery items.
+
+    Same logic as ``scripts/recommend_weekly_basket.py`` (JSON shape matches CLI
+    ``--json``). For simple preference-tag ranking of catalog items, use
+    ``GET /api/recommendations/{customer_id}`` instead.
+    """
+    row = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    ref: date_type | None = None
+    if date is not None and date.strip():
+        try:
+            ref = date_type.fromisoformat(date.strip())
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid date; use YYYY-MM-DD"
+            ) from e
+
+    if mode == "groceries":
+        return build_weekly_basket_recommendations(
+            db, customer_id, reference_date=ref, novelty_slots=novelty_slots
+        )
+    if mode == "dishes":
+        return build_dish_recommendations(
+            db, customer_id, reference_date=ref, novelty_slots=novelty_slots
+        )
+    return build_unified_weekly_recommendations(
+        db,
+        customer_id,
+        reference_date=ref,
+        novelty_slots=novelty_slots,
+        mode="both",
+    )
 
 
 FRONTEND_DIST = FRONTEND_DIR / "dist"

@@ -4,6 +4,9 @@ import WeeklySummary from "@/components/WeeklySummary";
 import TopBar from "@/components/TopBar";
 import Toolbar from "@/components/Toolbar";
 import AIPanel from "@/components/AIPanel";
+import WeekGroceriesSection from "@/components/WeekGroceriesSection";
+import AiSuggestionsSection from "@/components/AiSuggestionsSection";
+import DayExtrasDialog from "@/components/DayExtrasDialog";
 import PlannerGrid from "@/components/PlannerGrid";
 import CheckoutSidebar from "@/components/CheckoutSidebar";
 import { BasketIngredient } from "@/components/CheckoutSidebar";
@@ -19,13 +22,31 @@ import MealSwapPage from "@/components/MealSwapPage";
 import CheckoutPage from "@/components/CheckoutPage";
 import EasterPage from "@/components/EasterPage";
 import ProfilePage from "@/components/ProfilePage";
-import { mealPlanOptions, getRecipeForMeal, DayPlan, Meal, Product, recurringItems } from "@/data/meals";
-import { fetchRecipes, shoppingFromMeals } from "@/lib/api";
+import {
+  mealPlanOptions,
+  getRecipeForMeal,
+  DayPlan,
+  Meal,
+  Product,
+  recurringItems,
+  type DayExtraLine,
+} from "@/data/meals";
+import { fetchRecipes, shoppingFromMeals, matchDishes } from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
+import { mergeMealAndExtraForDisplay, mergeLinesBySku } from "@/lib/mergeBasket";
+import { toast } from "@/components/ui/sonner";
+
+const GROCERIES_LABEL = "Groceries";
 
 const Index = () => {
   const [activeNav, setActiveNav] = useState("planner");
-  const [activeMealFilters, setActiveMealFilters] = useState<string[]>(["breakfast", "lunch", "dinner"]);
+  const [activeMealFilters, setActiveMealFilters] = useState<string[]>([
+    "breakfast",
+    "lunch",
+    "dinner",
+    "extras",
+  ]);
+  const [extrasDialogMealId, setExtrasDialogMealId] = useState<string | null>(null);
   const [activePlanIndex] = useState(0);
   const [mealPlans, setMealPlans] = useState<DayPlan[][]>(() =>
     mealPlanOptions.map((o) => o.plans.map((d) => ({ ...d, meals: d.meals.map((m) => ({ ...m })) })))
@@ -36,14 +57,66 @@ const Index = () => {
   const [slotPickerOpen, setSlotPickerOpen] = useState(false);
   const [deliverySlot, setDeliverySlot] = useState("Mon 14.04 18:00-19:00");
   const [aiOpen, setAiOpen] = useState(false);
-  const [basketIngredients, setBasketIngredients] = useState<BasketIngredient[]>([]);
+  const [mealPlanBasket, setMealPlanBasket] = useState<BasketIngredient[]>([]);
+  const [extraGroceries, setExtraGroceries] = useState<BasketIngredient[]>([]);
+  const mealPlanBasketRef = useRef<BasketIngredient[]>([]);
+  mealPlanBasketRef.current = mealPlanBasket;
+
   const [favourites, setFavourites] = useState<{ id: string; name: string; brand: string; price: number; image: string }[]>([]);
   const [swapMealId, setSwapMealId] = useState<string | null>(null);
   const [checkoutPageOpen, setCheckoutPageOpen] = useState(false);
   const [easterPageOpen, setEasterPageOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
+  const [aiMatches, setAiMatches] = useState<{ id: string; name: string; reason?: string }[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
+
   const appliedApiPlan = useRef(false);
+
+  const mealPlan = mealPlans[activePlanIndex];
+
+  const slotExtrasBasket = useMemo(() => {
+    const lines: BasketIngredient[] = [];
+    for (const day of mealPlan) {
+      const slot = day.meals.find((m) => m.category === "extras");
+      // Do not require `selected`: the trash toggle only dims the card; saved extras should still count.
+      if (!slot?.extrasLines?.length) continue;
+      const label = `${day.day} · Extras`;
+      for (const row of slot.extrasLines) {
+        lines.push({
+          id: row.id,
+          name: row.name,
+          brand: row.brand,
+          price: row.price,
+          weight: row.weight,
+          image: row.image,
+          quantity: row.quantity,
+          fromMeal: label,
+        });
+      }
+    }
+    return mergeLinesBySku(lines);
+  }, [mealPlan]);
+
+  const catalogExtrasMerged = useMemo(
+    () => mergeLinesBySku([...slotExtrasBasket, ...extraGroceries]),
+    [slotExtrasBasket, extraGroceries]
+  );
+
+  const displayBasket = useMemo(
+    () => mergeMealAndExtraForDisplay(mealPlanBasket, catalogExtrasMerged),
+    [mealPlanBasket, catalogExtrasMerged]
+  );
+
+  const extrasDialogMeal = extrasDialogMealId
+    ? mealPlan.flatMap((d) => d.meals).find((m) => m.id === extrasDialogMealId) ?? null
+    : null;
+  const extrasDialogDay =
+    extrasDialogMealId && extrasDialogMeal
+      ? mealPlan.find((d) => d.meals.some((m) => m.id === extrasDialogMealId))?.day ?? ""
+      : "";
 
   const { data: catalogRecipes } = useQuery({
     queryKey: ["planner-recipes"],
@@ -55,7 +128,33 @@ const Index = () => {
     if (!catalogRecipes?.length || appliedApiPlan.current) return;
     appliedApiPlan.current = true;
     const plan = weekPlanFromRecipes(catalogRecipes);
-    setMealPlans([plan]);
+    setMealPlans((prev) => {
+      const previousWeek = prev[0];
+      if (!previousWeek?.length) return [plan];
+      const merged = plan.map((newDay) => {
+        const oldDay = previousWeek.find((d) => d.day === newDay.day);
+        const oldExtras = oldDay?.meals.find((m) => m.category === "extras");
+        const lines = oldExtras?.extrasLines;
+        if (!lines?.length) return newDay;
+        return {
+          ...newDay,
+          meals: newDay.meals.map((m) => {
+            if (m.category !== "extras") return m;
+            const n = lines.reduce((s, l) => s + l.quantity, 0);
+            const total = lines.reduce((s, l) => s + l.price * l.quantity, 0);
+            return {
+              ...m,
+              extrasLines: lines.map((l) => ({ ...l })),
+              selected: n > 0 ? true : m.selected,
+              price: Math.round(total * 100) / 100,
+              weight: n > 0 ? `${n} items` : m.weight,
+              name: n > 0 ? `Groceries (${n})` : m.name,
+            };
+          }),
+        };
+      });
+      return [merged];
+    });
 
     const slots = plan
       .flatMap((d) => d.meals)
@@ -105,20 +204,20 @@ const Index = () => {
     recurringItems.map((r) => ({ ...r, added: true, quantity: 1 }))
   );
 
-  const mealPlan = mealPlans[activePlanIndex];
-
   useEffect(() => {
-    const allSelectedMeals = mealPlan.flatMap((d) => d.meals).filter((m) => m.selected);
-    if (allSelectedMeals.length === 0) {
-      setBasketIngredients([]);
+    const selectedMeals = mealPlan.flatMap((d) => d.meals).filter((m) => m.selected);
+    const recipeMeals = selectedMeals.filter((m): m is Meal & { recipeId: string } => Boolean(m.recipeId));
+
+    if (selectedMeals.length === 0 || recipeMeals.length === 0) {
+      setMealPlanBasket([]);
       return;
     }
 
-    const allHaveRecipe = allSelectedMeals.every((m) => m.recipeId);
+    const allHaveRecipe = recipeMeals.every((m) => m.recipeId);
 
     if (!allHaveRecipe) {
       const ingredientsFromMeals: BasketIngredient[] = [];
-      for (const meal of allSelectedMeals) {
+      for (const meal of recipeMeals) {
         const recipe = getRecipeForMeal(meal);
         for (const ing of recipe.ingredients) {
           const existing = ingredientsFromMeals.find((i) => i.id === ing.id);
@@ -138,44 +237,53 @@ const Index = () => {
           }
         }
       }
-      setBasketIngredients(ingredientsFromMeals);
+      setMealPlanBasket(ingredientsFromMeals);
       return;
     }
 
     let cancelled = false;
     shoppingFromMeals(
-      allSelectedMeals.map((m) => ({
+      recipeMeals.map((m) => ({
         recipe_id: m.recipeId as string,
         label: m.name,
       }))
     )
       .then((res) => {
         if (cancelled) return;
-        const merged = new Map<string, BasketIngredient>();
+        const metaBySku = new Map<
+          string,
+          { article_name: string; ingredient_name: string; meal_label: string }
+        >();
         for (const row of res.detail) {
-          const sku = row.sku;
-          const existing = merged.get(sku);
-          if (existing) {
-            existing.quantity += row.quantity;
-          } else {
-            merged.set(sku, {
-              id: sku,
-              name: row.article_name,
-              brand: row.ingredient_name,
-              price: row.unit_price,
-              weight: `${row.quantity}×`,
-              image: "🛒",
-              quantity: row.quantity,
-              fromMeal: row.meal_label,
+          if (!metaBySku.has(row.sku)) {
+            metaBySku.set(row.sku, {
+              article_name: row.article_name,
+              ingredient_name: row.ingredient_name,
+              meal_label: row.meal_label,
             });
           }
         }
-        setBasketIngredients([...merged.values()]);
+        const merged: BasketIngredient[] = [];
+        for (const line of res.checkout_lines) {
+          const meta = metaBySku.get(line.sku);
+          if (!meta) continue;
+          merged.push({
+            id: line.sku,
+            name: line.name,
+            brand: meta.ingredient_name,
+            price: line.unit_price,
+            weight: `${line.quantity}×`,
+            image: "🛒",
+            quantity: line.quantity,
+            fromMeal: meta.meal_label,
+          });
+        }
+        setMealPlanBasket(merged);
       })
       .catch(() => {
         if (cancelled) return;
         const ingredientsFromMeals: BasketIngredient[] = [];
-        for (const meal of allSelectedMeals) {
+        for (const meal of recipeMeals) {
           const recipe = getRecipeForMeal(meal);
           for (const ing of recipe.ingredients) {
             const existing = ingredientsFromMeals.find((i) => i.id === ing.id);
@@ -195,7 +303,7 @@ const Index = () => {
             }
           }
         }
-        setBasketIngredients(ingredientsFromMeals);
+        setMealPlanBasket(ingredientsFromMeals);
       });
 
     return () => {
@@ -227,11 +335,39 @@ const Index = () => {
 
   const handleClickMeal = (id: string) => {
     const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === id);
-    if (meal) {
-      setSelectedMealData(meal);
-      setSelectedRecipe(id);
+    if (!meal) return;
+    if (meal.category === "extras") {
+      setExtrasDialogMealId(id);
+      return;
     }
+    setSelectedMealData(meal);
+    setSelectedRecipe(id);
   };
+
+  const handleApplyDayExtras = useCallback((mealId: string, lines: DayExtraLine[]) => {
+    setMealPlans((prev) =>
+      prev.map((plan, pi) =>
+        pi === activePlanIndex
+          ? plan.map((day) => ({
+              ...day,
+              meals: day.meals.map((m) => {
+                if (m.id !== mealId) return m;
+                const n = lines.reduce((s, l) => s + l.quantity, 0);
+                const total = lines.reduce((s, l) => s + l.price * l.quantity, 0);
+                return {
+                  ...m,
+                  extrasLines: lines,
+                  selected: n > 0 ? true : m.selected,
+                  price: Math.round(total * 100) / 100,
+                  weight: n > 0 ? `${n} items` : "Add items",
+                  name: n > 0 ? `Groceries (${n})` : "Day extras",
+                };
+              }),
+            }))
+          : plan
+      )
+    );
+  }, [activePlanIndex]);
 
   const filteredPlan = useMemo(
     () =>
@@ -243,32 +379,64 @@ const Index = () => {
     [mealPlan, activeMealFilters]
   );
 
-  const handleAddToBasket = useCallback(
-    (ingredients: { id: string; name: string; brand: string; price: number; weight: string; image: string; quantity: number }[]) => {
-      setBasketIngredients((prev) => {
-        const newItems = [...prev];
-        for (const ing of ingredients) {
-          const existing = newItems.find((i) => i.id === ing.id);
-          if (existing) {
-            existing.quantity += ing.quantity;
-          } else {
-            newItems.push({ ...ing });
-          }
-        }
-        return newItems;
-      });
-    },
-    []
-  );
-
-  const handleUpdateIngredientQty = useCallback((id: string, delta: number) => {
-    setBasketIngredients((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i))
+  const mergeExtraLine = useCallback((prev: BasketIngredient[], line: BasketIngredient): BasketIngredient[] => {
+    const existing = prev.find((i) => i.id === line.id);
+    if (!existing) return [...prev, { ...line, fromMeal: line.fromMeal ?? GROCERIES_LABEL }];
+    return prev.map((i) =>
+      i.id === line.id ? { ...i, quantity: i.quantity + line.quantity, price: line.price || i.price } : i
     );
   }, []);
 
+  const handleAddToBasket = useCallback(
+    (
+      ingredients: {
+        id: string;
+        name: string;
+        brand: string;
+        price: number;
+        weight: string;
+        image: string;
+        quantity: number;
+      }[]
+    ) => {
+      setExtraGroceries((prev) => {
+        let next = prev;
+        for (const ing of ingredients) {
+          const line: BasketIngredient = {
+            ...ing,
+            fromMeal: GROCERIES_LABEL,
+          };
+          next = mergeExtraLine(next, line);
+        }
+        return next;
+      });
+    },
+    [mergeExtraLine]
+  );
+
+  const handleUpdateIngredientQty = useCallback((id: string, delta: number) => {
+    const mealQty = mealPlanBasketRef.current.filter((m) => m.id === id).reduce((s, m) => s + m.quantity, 0);
+    setExtraGroceries((prev) => {
+      const ex = prev.find((e) => e.id === id);
+      const extraQty = ex?.quantity ?? 0;
+      const display = mealQty + extraQty;
+      const newDisplay = Math.max(mealQty, display + delta);
+      const newExtra = newDisplay - mealQty;
+      if (newExtra <= 0) return prev.filter((e) => e.id !== id);
+      const template = ex ?? mealPlanBasketRef.current.find((m) => m.id === id);
+      if (!template) return prev;
+      const updated: BasketIngredient = {
+        ...template,
+        quantity: newExtra,
+        fromMeal: GROCERIES_LABEL,
+      };
+      if (ex) return prev.map((e) => (e.id === id ? updated : e));
+      return [...prev, updated];
+    });
+  }, []);
+
   const handleRemoveIngredient = useCallback((id: string) => {
-    setBasketIngredients((prev) => prev.filter((i) => i.id !== id));
+    setExtraGroceries((prev) => prev.filter((e) => e.id !== id));
   }, []);
 
   const toggleFavourite = useCallback(
@@ -283,15 +451,10 @@ const Index = () => {
     [mealPlan]
   );
 
-  const handleAddProductToBasket = useCallback((product: Product) => {
-    setBasketIngredients((prev) => {
-      const existing = prev.find((i) => i.id === product.id);
-      if (existing) {
-        return prev.map((i) => (i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i));
-      }
-      return [
-        ...prev,
-        {
+  const handleAddProductToBasket = useCallback(
+    (product: Product) => {
+      setExtraGroceries((prev) =>
+        mergeExtraLine(prev, {
           id: product.id,
           name: product.name,
           brand: product.brand,
@@ -299,31 +462,59 @@ const Index = () => {
           weight: product.weight,
           image: product.image,
           quantity: 1,
-        },
-      ];
-    });
-  }, []);
+        })
+      );
+    },
+    [mergeExtraLine]
+  );
 
   const handleRemoveOneProductFromBasket = useCallback((productId: string) => {
-    setBasketIngredients((prev) => {
-      const item = prev.find((i) => i.id === productId);
-      if (!item) return prev;
-      if (item.quantity <= 1) return prev.filter((i) => i.id !== productId);
-      return prev.map((i) => (i.id === productId ? { ...i, quantity: i.quantity - 1 } : i));
+    setExtraGroceries((prev) => {
+      const ex = prev.find((e) => e.id === productId);
+      if (!ex) return prev;
+      if (ex.quantity <= 1) return prev.filter((e) => e.id !== productId);
+      return prev.map((e) => (e.id === productId ? { ...e, quantity: e.quantity - 1 } : e));
     });
+    // If there was no extra line but user clicked minus (shouldn't happen for qty badge), no-op
   }, []);
 
   const basketQuantityById = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const i of basketIngredients) {
+    for (const i of extraGroceries) {
       m[i.id] = (m[i.id] ?? 0) + i.quantity;
     }
     return m;
-  }, [basketIngredients]);
+  }, [extraGroceries]);
 
-  const ingredientsTotal = basketIngredients.reduce((s, i) => s + i.price * i.quantity, 0);
+  const ingredientsTotal = displayBasket.reduce((s, i) => s + i.price * i.quantity, 0);
   const recurringTotal = recurring.filter((r) => r.added).reduce((s, r) => s + r.price * r.quantity, 0);
   const grandTotal = ingredientsTotal + recurringTotal;
+
+  const handleAiPrompt = useCallback(async (text: string) => {
+    const q = text.trim();
+    if (!q) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiCatalogEmpty(false);
+    setAiMatches([]);
+    try {
+      const res = await matchDishes(q);
+      const matches = res.matches ?? [];
+      setAiMatches(matches);
+      setAiCatalogEmpty(matches.length === 0);
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      setAiMatches([]);
+      setAiCatalogEmpty(false);
+      setAiError(
+        err.includes("503") || err.toLowerCase().includes("openai")
+          ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or check API logs."
+          : `Could not reach match-dishes: ${err.slice(0, 200)}`
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
 
   const handleSwapMeal = useCallback(
     (oldId: string, newMeal: Meal) => {
@@ -342,12 +533,41 @@ const Index = () => {
     [activePlanIndex]
   );
 
+  const handleDropAiRecipeOnSlot = useCallback(
+    (mealId: string, recipe: { id: string; name: string }) => {
+      setMealPlans((prev) =>
+        prev.map((plan, pi) =>
+          pi === activePlanIndex
+            ? plan.map((day) => ({
+                ...day,
+                meals: day.meals.map((m) => {
+                  if (m.id !== mealId || m.category === "extras") return m;
+                  return {
+                    ...m,
+                    recipeId: recipe.id,
+                    name: recipe.name,
+                    brand: "Picnic",
+                    price: 0,
+                    weight: "1 serving",
+                    image: "🍽️",
+                    selected: true,
+                  };
+                }),
+              }))
+            : plan
+        )
+      );
+      toast.success(`Replaced with “${recipe.name}”`);
+    },
+    [activePlanIndex]
+  );
+
   const getSwapAlternatives = (mealId: string): Meal[] => {
     const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === mealId);
-    if (!meal) return [];
+    if (!meal || meal.category === "extras") return [];
     const pool = mealPlan
       .flatMap((d) => d.meals)
-      .filter((m) => m.category === meal.category && m.id !== meal.id);
+      .filter((m) => m.category === meal.category && m.id !== meal.id && m.category !== "extras");
     const unique = pool.filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
     return unique.slice(0, 3);
   };
@@ -382,7 +602,7 @@ const Index = () => {
         onBack={() => setCheckoutPageOpen(false)}
         deliverySlot={deliverySlot}
         onSelectSlot={setDeliverySlot}
-        basketIngredients={basketIngredients}
+        basketIngredients={displayBasket}
         recurringItems={recurring}
       />
     );
@@ -400,6 +620,7 @@ const Index = () => {
       if (apiRecipePreview?.detail?.length) {
         const ingredients = apiRecipePreview.detail.map((row, i) => ({
           id: `${row.sku}-${row.ingredient_name}-${i}`,
+          catalogSku: row.sku,
           name: row.article_name,
           brand: row.ingredient_name,
           price: row.unit_price,
@@ -461,11 +682,29 @@ const Index = () => {
       {activeNav === "planner" && (
         <>
           <Toolbar onToggleAI={() => setAiOpen((p) => !p)} aiOpen={aiOpen} />
-          <AIPanel isOpen={aiOpen} />
+          <AIPanel isOpen={aiOpen} loading={aiLoading} onSubmitPrompt={handleAiPrompt} />
           <WeeklySummary mealPlan={mealPlan} />
-          <div className="flex items-center justify-between px-4 py-3 max-w-6xl mx-auto w-full">
+          <AiSuggestionsSection
+            aiMatches={aiMatches}
+            aiLoading={aiLoading}
+            aiError={aiError}
+            aiCatalogEmpty={aiCatalogEmpty}
+          />
+          <div className="px-4 pt-2 max-w-6xl mx-auto w-full">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Per-weekday</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 max-w-6xl mx-auto w-full">
             <span className="text-sm font-bold text-foreground">Week of 7 Apr 2026</span>
-            <p className="text-xs text-muted-foreground">Click a meal for recipe & ingredients</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveNav("items")}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Browse all groceries
+              </button>
+              <p className="text-xs text-muted-foreground">Click a meal for recipe & ingredients</p>
+            </div>
           </div>
           <div className="flex-1 px-4 max-w-6xl mx-auto w-full pb-4">
             <PlannerGrid
@@ -477,8 +716,21 @@ const Index = () => {
               onToggleFavourite={toggleFavourite}
               favouriteIds={favourites.map((f) => f.id)}
               onSwapMeal={(id) => setSwapMealId(id)}
+              onDropAiRecipe={handleDropAiRecipeOnSlot}
             />
           </div>
+          <WeekGroceriesSection basketIngredients={displayBasket} ingredientsTotal={ingredientsTotal} />
+          <DayExtrasDialog
+            open={extrasDialogMealId != null}
+            onOpenChange={(o) => {
+              if (!o) setExtrasDialogMealId(null);
+            }}
+            dayLabel={extrasDialogDay}
+            meal={extrasDialogMeal}
+            onApply={(lines) => {
+              if (extrasDialogMealId) handleApplyDayExtras(extrasDialogMealId, lines);
+            }}
+          />
         </>
       )}
 
@@ -500,7 +752,7 @@ const Index = () => {
         mealPlan={mealPlan}
         deliverySlot={deliverySlot}
         onOpenSlotPicker={() => setSlotPickerOpen(true)}
-        basketIngredients={basketIngredients}
+        basketIngredients={displayBasket}
         onUpdateIngredientQty={handleUpdateIngredientQty}
         onRemoveIngredient={handleRemoveIngredient}
         recurring={recurring}

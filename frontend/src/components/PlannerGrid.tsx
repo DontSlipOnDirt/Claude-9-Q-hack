@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Trash2, Heart, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { DayPlan } from "@/data/meals";
+import { parseAiRecipeDrag } from "@/lib/dragAiRecipe";
+import { cn } from "@/lib/utils";
 
 interface PlannerGridProps {
   filteredPlan: DayPlan[];
@@ -11,18 +13,22 @@ interface PlannerGridProps {
   onToggleFavourite?: (id: string) => void;
   favouriteIds?: string[];
   onSwapMeal?: (id: string) => void;
+  /** Drop an AI-suggested recipe onto a meal slot (not extras). */
+  onDropAiRecipe?: (mealId: string, recipe: { id: string; name: string }) => void;
 }
 
 const categoryLabel: Record<string, string> = {
   breakfast: "Breakfast",
   lunch: "Lunch",
   dinner: "Dinner",
+  extras: "Extras",
 };
 
 const cardThemes = [
   { bg: "bg-card-warm", border: "border-orange-200", dot: "bg-orange-400" },
   { bg: "bg-card-cool", border: "border-blue-200", dot: "bg-blue-400" },
   { bg: "bg-card-fresh", border: "border-emerald-200", dot: "bg-emerald-400" },
+  { bg: "bg-muted/40", border: "border-violet-200", dot: "bg-violet-400" },
 ];
 
 const CARDS_PER_PAGE = 3;
@@ -36,12 +42,20 @@ const PlannerGrid = ({
   onToggleFavourite,
   favouriteIds = [],
   onSwapMeal,
+  onDropAiRecipe,
 }: PlannerGridProps) => {
   const [page, setPage] = useState(0);
+  const [dragOverMealId, setDragOverMealId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const clear = () => setDragOverMealId(null);
+    window.addEventListener("dragend", clear);
+    return () => window.removeEventListener("dragend", clear);
+  }, []);
   const totalPages = Math.ceil(filteredPlan.length / CARDS_PER_PAGE);
   const visibleDays = filteredPlan.slice(page * CARDS_PER_PAGE, (page + 1) * CARDS_PER_PAGE);
 
-  const visibleCategories = ["breakfast", "lunch", "dinner"].filter(
+  const visibleCategories = ["breakfast", "lunch", "dinner", "extras"].filter(
     (c) => activeMealFilters.length === 0 || activeMealFilters.includes(c)
   );
 
@@ -73,22 +87,50 @@ const PlannerGrid = ({
                   {visibleCategories.map((cat) => {
                     const meal = day.meals.find((m) => m.category === cat);
                     if (!meal) return null;
+                    const isExtras = meal.category === "extras";
+                    const extraLines = meal.extrasLines ?? [];
+                    const extraUnits = extraLines.reduce((s, x) => s + x.quantity, 0);
+                    const extraTotal = extraLines.reduce((s, x) => s + x.price * x.quantity, 0);
                     return (
                       <div key={cat}>
                         <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
                           {categoryLabel[cat]}
                         </p>
                         <div
-                          className={`relative rounded-xl p-3 transition-all cursor-pointer group ${
+                          className={cn(
+                            "relative rounded-xl p-3 transition-all cursor-pointer group",
                             meal.selected
                               ? "bg-card border border-border/60 shadow-sm hover:shadow-md"
-                              : "bg-muted/40 border border-dashed border-muted-foreground/20 opacity-50"
-                          }`}
+                              : "bg-muted/40 border border-dashed border-muted-foreground/20 opacity-50",
+                            !isExtras &&
+                              onDropAiRecipe &&
+                              dragOverMealId === meal.id &&
+                              "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                          )}
                           onClick={() => onClickMeal(meal.id)}
+                          onDragOver={
+                            isExtras || !onDropAiRecipe
+                              ? undefined
+                              : (e) => {
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "copy";
+                                  setDragOverMealId(meal.id);
+                                }
+                          }
+                          onDrop={
+                            isExtras || !onDropAiRecipe
+                              ? undefined
+                              : (e) => {
+                                  e.preventDefault();
+                                  setDragOverMealId(null);
+                                  const recipe = parseAiRecipeDrag(e.dataTransfer);
+                                  if (recipe) onDropAiRecipe(meal.id, recipe);
+                                }
+                          }
                         >
                           {/* Action buttons */}
                           <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {onToggleFavourite && (
+                            {onToggleFavourite && !isExtras && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -105,7 +147,7 @@ const PlannerGrid = ({
                                 />
                               </button>
                             )}
-                            {onSwapMeal && (
+                            {onSwapMeal && !isExtras && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -138,13 +180,24 @@ const PlannerGrid = ({
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-semibold text-foreground truncate">
-                                {meal.name}
+                                {isExtras
+                                  ? extraUnits > 0
+                                    ? `Groceries (${extraUnits})`
+                                    : "Add groceries"
+                                  : meal.name}
                               </p>
-                              <div className="flex items-center gap-2 mt-0.5">
+                              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                 <span className="text-sm font-bold text-foreground">
-                                  {meal.price.toFixed(2).replace(".", ",")} €
+                                  {isExtras
+                                    ? extraUnits > 0
+                                      ? `${extraTotal.toFixed(2).replace(".", ",")} €`
+                                      : "—"
+                                    : `${meal.price.toFixed(2).replace(".", ",")} €`}
                                 </span>
-                                {meal.calories && (
+                                {isExtras && extraUnits > 0 && (
+                                  <span className="text-[10px] text-muted-foreground">Groceries</span>
+                                )}
+                                {!isExtras && meal.calories && (
                                   <span className="text-[10px] text-muted-foreground">
                                     🔥 {meal.calories} kcal
                                   </span>
@@ -185,10 +238,10 @@ const PlannerGrid = ({
       </div>
 
       {/* Restore hidden columns */}
-      {visibleCategories.length < 3 && (
-        <div className="flex items-center gap-2 px-3">
+      {visibleCategories.length < 4 && (
+        <div className="flex items-center gap-2 px-3 flex-wrap">
           <span className="text-xs text-muted-foreground">Hidden:</span>
-          {["breakfast", "lunch", "dinner"]
+          {["breakfast", "lunch", "dinner", "extras"]
             .filter((c) => !visibleCategories.includes(c))
             .map((cat) => (
               <button

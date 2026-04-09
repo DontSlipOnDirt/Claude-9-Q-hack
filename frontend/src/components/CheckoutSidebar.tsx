@@ -23,6 +23,8 @@ export interface BasketIngredient {
   image: string;
   quantity: number;
   fromMeal?: string;
+  /** Present when the line includes catalog groceries or meal + extras. */
+  sourceLabel?: string;
 }
 
 interface RecurringItemState {
@@ -116,7 +118,12 @@ const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotP
                   <BasketLineThumb image={item.image} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">{item.brand} · {item.weight}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {item.brand} · {item.weight}
+                      {(item.sourceLabel ?? item.fromMeal) && (
+                        <span className="text-muted-foreground/90"> · {item.sourceLabel ?? item.fromMeal}</span>
+                      )}
+                    </p>
                   </div>
                   <div className="flex items-center gap-1 border border-border rounded-full px-1">
                     <button onClick={() => onUpdateIngredientQty(item.id, -1)} className="p-1">
