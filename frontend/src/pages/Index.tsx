@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import WeeklySummary from "@/components/WeeklySummary";
 import TopBar from "@/components/TopBar";
 import Toolbar from "@/components/Toolbar";
@@ -27,10 +27,19 @@ import {
   DayPlan,
   Meal,
   Product,
-  recurringItems,
   type DayExtraLine,
 } from "@/data/meals";
-import { fetchRecipes, shoppingFromMeals, matchDishes, speakText } from "@/lib/api";
+import {
+  createOrder,
+  fetchDeliveries,
+  fetchRecurringEligible,
+  fetchRecipes,
+  matchDishes,
+  PICNIC_DEMO_CUSTOMER_ID,
+  shoppingFromMeals,
+  speakText,
+  imageUrlFromShoppingDetailRow,
+} from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
 import {
   loadRecipePreferenceScores,
@@ -57,7 +66,23 @@ import { toast } from "@/components/ui/sonner";
 
 const GROCERIES_LABEL = "Groceries";
 
+/** Matches article `sku` values from SQLite (e.g. `VEG-TOM-001`). Excludes mock IDs like `rec-milk`. */
+const CATALOG_SKU_RE = /^[A-Z0-9]+-[A-Z0-9]+-\d{3}$/;
+
+type RecurringLine = {
+  id: string;
+  name: string;
+  brand: string;
+  price: number;
+  weight: string;
+  image: string;
+  frequency: string;
+  added: boolean;
+  quantity: number;
+};
+
 const Index = () => {
+  const queryClient = useQueryClient();
   const [activeNav, setActiveNav] = useState("planner");
   const [activeMealFilters, setActiveMealFilters] = useState<string[]>([
     "breakfast",
@@ -102,6 +127,9 @@ const Index = () => {
   const [plannerDietKey, setPlannerDietKey] = useState(0);
   /** Bumps when spicy learning crosses threshold or user resets — replan ordering / filters. */
   const [spicyLearningKey, setSpicyLearningKey] = useState(0);
+
+  const [recurring, setRecurring] = useState<RecurringLine[]>([]);
+  const recurringFpRef = useRef("");
 
   const mealPlan = mealPlans[activePlanIndex];
 
@@ -189,6 +217,40 @@ const Index = () => {
   const spicyLearnState = useMemo(() => loadSpicyLearning(), [spicyLearningKey]);
   const spicyHiddenFromPlanner = spicyLearnState.avoidSpicy;
 
+  const { data: recurringPayload } = useQuery({
+    queryKey: ["recurring-eligible", PICNIC_DEMO_CUSTOMER_ID],
+    queryFn: () => fetchRecurringEligible(PICNIC_DEMO_CUSTOMER_ID),
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!recurringPayload?.items) return;
+    const fp = recurringPayload.items
+      .map((i) => `${i.sku}:${i.interval_days}:${i.last_ordered_at ?? ""}`)
+      .join("|");
+    if (fp === recurringFpRef.current) return;
+    recurringFpRef.current = fp;
+    setRecurring(
+      recurringPayload.items.map((row) => ({
+        id: row.sku,
+        name: row.name,
+        brand: row.category || "Catalog",
+        price: row.price,
+        weight: `${row.suggested_quantity}×`,
+        image:
+          row.image_url && (row.image_url.startsWith("/") || row.image_url.startsWith("http"))
+            ? row.image_url
+            : "🛒",
+        frequency:
+          row.source === "manual"
+            ? `Every ${row.interval_days} d · My staple`
+            : `Every ${row.interval_days} d · Auto (≥1 order)`,
+        added: false,
+        quantity: row.suggested_quantity,
+      }))
+    );
+  }, [recurringPayload]);
+
   useEffect(() => {
     const onProfileSaved = () => {
       setPlannerDietKey((k) => k + 1);
@@ -271,10 +333,14 @@ const Index = () => {
       .then((res) => {
         if (cancelled) return;
         const totals = new Map<string, number>();
+        const imageBySlot = new Map<string, string>();
         for (const row of res.detail) {
           const key = String(row.meal_label ?? "").trim();
           if (!key) continue;
           totals.set(key, (totals.get(key) ?? 0) + row.line_total);
+          if (!imageBySlot.has(key)) {
+            imageBySlot.set(key, imageUrlFromShoppingDetailRow(row));
+          }
         }
         setMealPlans((prev) =>
           prev.map((week) =>
@@ -283,8 +349,13 @@ const Index = () => {
               meals: day.meals.map((m) => {
                 if (!m.recipeId) return m;
                 const t = totals.get(m.id);
-                if (t === undefined) return m;
-                return { ...m, price: Math.round(t * 100) / 100 };
+                const img = imageBySlot.get(m.id);
+                if (t === undefined && img === undefined) return m;
+                return {
+                  ...m,
+                  ...(t !== undefined ? { price: Math.round(t * 100) / 100 } : {}),
+                  ...(img !== undefined && m.category !== "extras" ? { image: img } : {}),
+                };
               }),
             }))
           )
@@ -310,10 +381,6 @@ const Index = () => {
       ]),
     enabled: Boolean(selectedMealData?.recipeId && selectedRecipe),
   });
-
-  const [recurring, setRecurring] = useState(
-    recurringItems.map((r) => ({ ...r, added: true, quantity: 1 }))
-  );
 
   useEffect(() => {
     const selectedMeals = mealPlan.flatMap((d) => d.meals).filter((m) => m.selected);
@@ -364,7 +431,7 @@ const Index = () => {
         if (cancelled) return;
         const metaBySku = new Map<
           string,
-          { article_name: string; ingredient_name: string; meal_label: string }
+          { article_name: string; ingredient_name: string; meal_label: string; image: string }
         >();
         for (const row of res.detail) {
           if (!metaBySku.has(row.sku)) {
@@ -372,6 +439,7 @@ const Index = () => {
               article_name: row.article_name,
               ingredient_name: row.ingredient_name,
               meal_label: row.meal_label,
+              image: imageUrlFromShoppingDetailRow(row),
             });
           }
         }
@@ -386,7 +454,7 @@ const Index = () => {
             brand: meta.ingredient_name,
             price: line.unit_price,
             weight: `${line.quantity}×`,
-            image: "🛒",
+            image: meta.image,
             quantity: line.quantity,
             fromMeal: slotNameById.get(fromSlot) ?? fromSlot,
           });
@@ -659,6 +727,69 @@ const Index = () => {
   const recurringTotal = recurring.filter((r) => r.added).reduce((s, r) => s + r.price * r.quantity, 0);
   const grandTotal = ingredientsTotal + recurringTotal;
 
+  const handlePlaceOrder = useCallback(async () => {
+    const qtyBySku = new Map<string, number>();
+    const addLine = (id: string, q: number) => {
+      if (!CATALOG_SKU_RE.test(id)) return;
+      qtyBySku.set(id, (qtyBySku.get(id) ?? 0) + q);
+    };
+    for (const i of displayBasket) addLine(i.id, i.quantity);
+    for (const r of recurring) {
+      if (r.added) addLine(r.id, r.quantity);
+    }
+    const lines = Array.from(qtyBySku, ([sku, quantity]) => ({ sku, quantity }));
+    if (!lines.length) {
+      toast.error(
+        "No catalog items to order. Add groceries from the planner or Items tab."
+      );
+      return;
+    }
+
+    let deliveryId: string;
+    try {
+      const deliveries = await fetchDeliveries();
+      deliveryId = deliveries[0]?.id ?? "";
+    } catch {
+      toast.error("Could not load deliveries. Is the API running on port 8000?");
+      return;
+    }
+    if (!deliveryId) {
+      toast.error("No delivery slots in the database.");
+      return;
+    }
+
+    const recipeIds = [
+      ...new Set(
+        mealPlan
+          .flatMap((d) => d.meals)
+          .filter((m) => m.selected && m.recipeId)
+          .map((m) => m.recipeId as string)
+      ),
+    ];
+
+    try {
+      const result = await createOrder({
+        customer_id: PICNIC_DEMO_CUSTOMER_ID,
+        delivery_id: deliveryId,
+        status: "paid",
+        creation_date: new Date().toISOString().slice(0, 10),
+        lines,
+        recipe_ids: recipeIds,
+      });
+      toast.success(
+        `Order ${result.order_id.slice(0, 8)}… placed — ${result.total_price.toFixed(2).replace(".", ",")} € (catalog lines)`
+      );
+      setMealPlanBasket([]);
+      setExtraGroceries([]);
+      setCheckoutPageOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["recurring-eligible", PICNIC_DEMO_CUSTOMER_ID] });
+      queryClient.invalidateQueries({ queryKey: ["recurring-manual", PICNIC_DEMO_CUSTOMER_ID] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg.length > 180 ? `${msg.slice(0, 180)}…` : msg);
+    }
+  }, [displayBasket, recurring, mealPlan, queryClient]);
+
   const handleAiPrompt = useCallback(async (text: string) => {
     const q = text.trim();
     if (!q) return;
@@ -785,6 +916,23 @@ const Index = () => {
         )
       );
       toast.success(`Replaced with “${recipe.name}”`);
+      shoppingFromMeals([{ recipe_id: recipe.id, label: mealId }])
+        .then((res) => {
+          const row = res.detail[0];
+          if (!row) return;
+          const img = imageUrlFromShoppingDetailRow(row);
+          setMealPlans((prev) =>
+            prev.map((plan, pi) =>
+              pi === activePlanIndex
+                ? plan.map((day) => ({
+                    ...day,
+                    meals: day.meals.map((m) => (m.id === mealId ? { ...m, image: img } : m)),
+                  }))
+                : plan
+            )
+          );
+        })
+        .catch(() => {});
     },
     [activePlanIndex, recipeDietTagsById, mealPlan]
   );
@@ -822,7 +970,12 @@ const Index = () => {
   );
 
   if (profileOpen) {
-    return <ProfilePage onBack={() => setProfileOpen(false)} />;
+    return (
+      <ProfilePage
+        customerId={PICNIC_DEMO_CUSTOMER_ID}
+        onBack={() => setProfileOpen(false)}
+      />
+    );
   }
 
   if (easterPageOpen) {
@@ -839,6 +992,7 @@ const Index = () => {
         onSelectSlot={setDeliverySlot}
         basketIngredients={displayBasket}
         recurringItems={recurring}
+        onPlaceOrder={handlePlaceOrder}
       />
     );
   }
@@ -862,7 +1016,7 @@ const Index = () => {
           weight: String(row.quantity),
           needed: row.ingredient_name,
           quantity: row.quantity,
-          image: "🛒",
+          image: imageUrlFromShoppingDetailRow(row),
           alternatives: [] as { name: string; brand: string; price: number; image: string }[],
         }));
         return (
@@ -949,23 +1103,23 @@ const Index = () => {
             aiCatalogEmpty={aiCatalogEmpty}
             dietTagsByRecipeId={recipeDietTagsById}
           />
-          <div className="px-4 pt-2 max-w-6xl mx-auto w-full">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Per-weekday</p>
+          <div className="px-4 pt-2 max-w-app mx-auto w-full">
+            <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Per-weekday</p>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 max-w-6xl mx-auto w-full">
-            <span className="text-sm font-bold text-foreground">Week of 7 Apr 2026</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 max-w-app mx-auto w-full">
+            <span className="text-lg font-bold text-foreground">Week of 7 Apr 2026</span>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setActiveNav("items")}
-                className="text-xs font-medium text-primary hover:underline"
+                className="text-sm font-medium text-primary hover:underline"
               >
                 Browse all groceries
               </button>
-              <p className="text-xs text-muted-foreground">Click a meal for recipe & ingredients</p>
+              <p className="text-sm text-muted-foreground">Click a meal for recipe & ingredients</p>
             </div>
           </div>
-          <div className="flex-1 px-4 max-w-6xl mx-auto w-full pb-4">
+          <div className="flex-1 px-4 max-w-app mx-auto w-full pb-4">
             <PlannerGrid
               filteredPlan={filteredPlan}
               activeMealFilters={activeMealFilters}
@@ -995,6 +1149,7 @@ const Index = () => {
 
       {activeNav === "items" && (
         <ItemsPage
+          customerId={PICNIC_DEMO_CUSTOMER_ID}
           onAddToBasket={handleAddProductToBasket}
           onRemoveOneFromBasket={handleRemoveOneProductFromBasket}
           basketQuantityById={basketQuantityById}
@@ -1016,6 +1171,10 @@ const Index = () => {
         onRemoveIngredient={handleRemoveIngredient}
         recurring={recurring}
         onSetRecurring={setRecurring}
+        onCheckout={() => {
+          setCheckoutOpen(false);
+          setCheckoutPageOpen(true);
+        }}
       />
 
       <DeliverySlotPicker
@@ -1025,12 +1184,7 @@ const Index = () => {
         onSelectSlot={setDeliverySlot}
       />
 
-      <FooterBar
-        mealPlan={mealPlan}
-        grandTotal={grandTotal}
-        deliverySlot={deliverySlot}
-        onCheckout={() => setCheckoutPageOpen(true)}
-      />
+      <FooterBar grandTotal={grandTotal} onCheckout={() => setCheckoutPageOpen(true)} />
     </div>
   );
 };

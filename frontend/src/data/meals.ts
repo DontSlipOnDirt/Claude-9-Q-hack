@@ -23,6 +23,8 @@ export interface Meal {
   recipeId?: string;
   /** preference_tags.code values from catalog, e.g. vegan, halal */
   dietTags?: string[];
+  /** Optional kcal for planner / summary when enriched from API. */
+  calories?: number;
   /** Groceries for this weekday when category is "extras". */
   extrasLines?: DayExtraLine[];
 }

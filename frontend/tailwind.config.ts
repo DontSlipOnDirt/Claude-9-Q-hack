@@ -13,6 +13,10 @@ export default {
       },
     },
     extend: {
+      maxWidth: {
+        /** Main app column: wider than 6xl (~1152px), caps at 96rem; nearly full width on small viewports. */
+        app: "min(96rem, calc(100vw - 1.5rem))",
+      },
       fontFamily: {
         sans: ['Inter', 'sans-serif'],
       },

@@ -26,6 +26,7 @@ from backend.services.basket_recommender import (
     build_weekly_basket_recommendations,
 )
 from backend.services.match_dishes import load_env_file, match_dishes
+from backend.services.recurring_items import build_recurring_items, list_manual_settings
 from backend.services.shopping_from_meal_plan import build_shopping_from_meals
 from backend.services.shopping_basket import build_shopping_basket
 
@@ -97,6 +98,12 @@ class MatchDishesBody(BaseModel):
     )
 
 
+class RecurringManualUpsert(BaseModel):
+    sku: str
+    interval_days: int = Field(ge=1, le=730)
+    default_quantity: int = Field(default=1, ge=1, le=99)
+
+
 class VoiceTokenResponse(BaseModel):
     token: str
     model_id: str
@@ -162,8 +169,9 @@ def startup_check() -> None:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Clients use ``recurring_staples_api`` to detect a stale server missing staple routes."""
+    return {"status": "ok", "recurring_staples_api": True}
 
 
 @app.get("/api/onboarding/questions")
@@ -602,6 +610,74 @@ def list_customer_orders(customer_id: str) -> list[dict[str, Any]]:
         """,
         (customer_id,),
     )
+
+
+@app.get("/api/customers/{customer_id}/recurring-items")
+def get_customer_recurring_items(
+    customer_id: str,
+    as_of: str | None = Query(
+        None,
+        description="Reference date YYYY-MM-DD (default UTC today)",
+    ),
+    include_not_due: bool = Query(
+        False,
+        description="Include staples that are not yet eligible (for debugging / copy)",
+    ),
+) -> dict[str, Any]:
+    row = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return build_recurring_items(
+        db,
+        customer_id,
+        as_of=as_of,
+        only_eligible=not include_not_due,
+    )
+
+
+@app.get("/api/customers/{customer_id}/recurring-manual")
+def get_customer_recurring_manual(customer_id: str) -> list[dict[str, Any]]:
+    row = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return list_manual_settings(db, customer_id)
+
+
+@app.put("/api/customers/{customer_id}/recurring-manual")
+def put_customer_recurring_manual(
+    customer_id: str, body: RecurringManualUpsert
+) -> dict[str, str]:
+    row = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    art = db.row("SELECT sku FROM articles WHERE sku = ? AND is_available = 1", (body.sku,))
+    if not art:
+        raise HTTPException(status_code=404, detail="Unknown or unavailable sku")
+    db.execute(
+        """
+        INSERT INTO customer_recurring_items (customer_id, sku, interval_days, default_quantity, source, enabled)
+        VALUES (?, ?, ?, ?, 'manual', 1)
+        ON CONFLICT(customer_id, sku) DO UPDATE SET
+            interval_days = excluded.interval_days,
+            default_quantity = excluded.default_quantity,
+            source = 'manual',
+            enabled = 1
+        """,
+        (customer_id, body.sku, body.interval_days, body.default_quantity),
+    )
+    return {"status": "ok", "sku": body.sku}
+
+
+@app.delete("/api/customers/{customer_id}/recurring-manual/{sku}")
+def delete_customer_recurring_manual(customer_id: str, sku: str) -> dict[str, str]:
+    row = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    db.execute(
+        "DELETE FROM customer_recurring_items WHERE customer_id = ? AND sku = ?",
+        (customer_id, sku),
+    )
+    return {"status": "ok"}
 
 
 @app.get("/api/customers/{customer_id}/shopping-basket")

@@ -31,7 +31,7 @@ const EasterPage = ({ onBack, onAddToBasket }: EasterPageProps) => {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border-b border-yellow-200 px-4 py-4">
-        <div className="max-w-6xl mx-auto flex items-center gap-3">
+        <div className="max-w-app mx-auto flex items-center gap-3">
           <button onClick={onBack} className="p-2 hover:bg-card rounded-full transition-colors">
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
@@ -47,7 +47,7 @@ const EasterPage = ({ onBack, onAddToBasket }: EasterPageProps) => {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto w-full px-4 py-6 flex-1">
+      <div className="max-w-app mx-auto w-full px-4 py-6 flex-1">
         {/* Easter Menus */}
         <div className="mb-10">
           <div className="flex items-center gap-2 mb-4">

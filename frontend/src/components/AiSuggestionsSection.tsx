@@ -28,14 +28,14 @@ const AiSuggestionsSection = ({
   const hiddenByPreference =
     typeof sourceMatchCount === "number" && sourceMatchCount > 0 && aiMatches.length === 0;
   return (
-    <div className="max-w-6xl mx-auto w-full px-4 mb-4">
+    <div className="max-w-app mx-auto w-full px-4 mb-4">
       <div className="rounded-2xl border border-border bg-card/80 shadow-sm overflow-hidden">
         <div className="px-4 py-3 border-b border-border bg-muted/30">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-accent shrink-0" />
             <div>
-              <h3 className="font-bold text-foreground text-base leading-tight">AI suggestions</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <h3 className="font-bold text-foreground text-lg leading-tight">AI suggestions</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">
                 Recipe ideas from your catalog — drag onto the breakfast, lunch, or dinner slot you want to fill. The week
                 grid picks morning-friendly recipes for breakfast and heavier mains for lunch and dinner.
               </p>
@@ -47,7 +47,7 @@ const AiSuggestionsSection = ({
             <Alert variant="destructive" className="py-3">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle className="text-sm">Could not match dishes</AlertTitle>
-              <AlertDescription className="text-xs">{aiError}</AlertDescription>
+              <AlertDescription className="text-sm">{aiError}</AlertDescription>
             </Alert>
           )}
 
@@ -85,19 +85,19 @@ const AiSuggestionsSection = ({
                       <GripVertical className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm font-semibold text-foreground leading-snug">{m.name}</p>
+                          <p className="text-base font-semibold text-foreground leading-snug">{m.name}</p>
                           <DietStickers
                             dietTags={dietTagsByRecipeId?.[m.id]}
                             className="shrink-0"
                           />
                         </div>
                         {typeof m.estimated_price === "number" && m.estimated_price > 0 ? (
-                          <p className="text-xs font-semibold text-foreground mt-1">
+                          <p className="text-sm font-semibold text-foreground mt-1">
                             {m.estimated_price.toFixed(2).replace(".", ",")} €
                           </p>
                         ) : null}
                         {m.reason ? (
-                          <p className="text-xs text-muted-foreground mt-1 line-clamp-3">{m.reason}</p>
+                          <p className="text-sm text-muted-foreground mt-1 line-clamp-3">{m.reason}</p>
                         ) : null}
                       </div>
                     </div>
@@ -121,7 +121,7 @@ const AiSuggestionsSection = ({
           )}
 
           {!aiLoading && !aiError && !aiCatalogEmpty && aiMatches.length === 0 && !hiddenByPreference && (
-            <p className="text-xs text-muted-foreground">Use the AI Meal Assistant above — suggestions appear here.</p>
+            <p className="text-sm text-muted-foreground">Use the AI Meal Assistant above — suggestions appear here.</p>
           )}
         </div>
       </div>

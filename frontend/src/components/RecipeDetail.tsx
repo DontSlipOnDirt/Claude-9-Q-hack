@@ -3,6 +3,54 @@ import { ArrowLeft, Heart, Share2, Minus, Plus, Trash2, ShoppingCart } from "luc
 import DietStickers, { hasVisibleDietStickers } from "@/components/DietStickers";
 import { Ingredient } from "@/data/meals";
 
+function isCatalogOrRemoteUrl(s: string) {
+  return s.startsWith("http") || s.startsWith("/");
+}
+
+function RecipeHeroVisual({ value }: { value?: string }) {
+  const [broken, setBroken] = useState(false);
+  const fallback = "🍽️";
+  const raw = value?.trim() || fallback;
+  const useImg = isCatalogOrRemoteUrl(raw) && !broken;
+  return (
+    <div className="h-48 bg-muted flex items-center justify-center overflow-hidden">
+      {useImg ? (
+        <img
+          src={raw}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          decoding="async"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <span className="text-8xl leading-none">{broken ? fallback : raw}</span>
+      )}
+    </div>
+  );
+}
+
+function IngredientThumb({ image }: { image: string }) {
+  const [broken, setBroken] = useState(false);
+  const useImg = isCatalogOrRemoteUrl(image) && !broken;
+  return (
+    <div className="w-full flex-1 min-h-0 flex items-center justify-center overflow-hidden rounded-t-xl">
+      {useImg ? (
+        <img
+          src={image}
+          alt=""
+          className="max-h-full max-w-full object-contain p-1"
+          loading="lazy"
+          decoding="async"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <span className="text-3xl leading-none">{broken ? "🛒" : image}</span>
+      )}
+    </div>
+  );
+}
+
 interface RecipeDetailProps {
   title: string;
   subtitle: string;
@@ -92,7 +140,7 @@ const RecipeDetail = ({
         </div>
       </div>
 
-      <div className="h-48 bg-muted flex items-center justify-center text-8xl">{heroEmoji || "🍽️"}</div>
+      <RecipeHeroVisual value={heroEmoji} />
 
       <div className="px-4 pt-3 pb-2 bg-card">
         <p className="text-sm text-accent font-medium">{subtitle}</p>
@@ -145,8 +193,8 @@ const RecipeDetail = ({
           <div className="divide-y divide-border">
             {items.map((item) => (
               <div key={item.id} className="flex items-center gap-4 px-4 py-4">
-                <div className="w-24 h-20 bg-muted rounded-xl flex flex-col items-center justify-center flex-shrink-0 relative">
-                  <span className="text-3xl">{item.image}</span>
+                <div className="w-24 h-20 bg-muted rounded-xl flex flex-col items-stretch flex-shrink-0 relative overflow-hidden">
+                  <IngredientThumb image={item.image} />
                   <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between bg-card/90 rounded-full border border-border px-1">
                     <button onClick={() => updateQty(item.id, -1)} className="p-1"><Minus className="w-3.5 h-3.5" /></button>
                     <span className="text-xs font-bold">{item.quantity}</span>

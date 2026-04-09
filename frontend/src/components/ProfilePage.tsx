@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useState, useRef, type ChangeEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Minus, Plus, User, Check } from "lucide-react";
-import { toast } from "@/components/ui/sonner";
-import { imageFileToAvatarDataUrl } from "@/lib/avatarImage";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Minus, Plus, User, Check, Trash2, ShoppingBag } from "lucide-react";
 import { loadHouseholdProfile, saveHouseholdProfile, type SavedHouseholdProfile } from "@/lib/profileStorage";
 import { loadSpicyLearning, resetSpicyAvoid, SPICY_LEARNING_EVENT } from "@/lib/spicyLearning";
-import { resetRecipePreferences } from "@/lib/recipePreferenceLearning";
-import { fetchPreferenceTags, type PreferenceTag } from "@/lib/api";
+import {
+  deleteRecurringManual,
+  fetchArticles,
+  fetchPreferenceTags,
+  fetchRecurringManual,
+  upsertRecurringManual,
+  type PreferenceTag,
+} from "@/lib/api";
+import { toast } from "@/components/ui/sonner";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 
 interface ProfilePageProps {
+  customerId: string;
   onBack: () => void;
 }
 
@@ -48,12 +54,60 @@ function stripFlavorConflict(
   };
 }
 
-const ProfilePage = ({ onBack }: ProfilePageProps) => {
+const ProfilePage = ({ customerId, onBack }: ProfilePageProps) => {
+  const queryClient = useQueryClient();
   const [profile, setProfile] = useState<SavedHouseholdProfile>(() => loadHouseholdProfile());
   const [spicyLearning, setSpicyLearning] = useState(() => loadSpicyLearning());
   const [addOpen, setAddOpen] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const { adults, children, pets, selectedDiets, dietCounts, avatarDataUrl } = profile;
+
+  const [pickSku, setPickSku] = useState("");
+  const [intervalDays, setIntervalDays] = useState(14);
+  const [stapleQty, setStapleQty] = useState(1);
+
+  const { data: articles } = useQuery({
+    queryKey: ["catalog-articles"],
+    queryFn: fetchArticles,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: staples } = useQuery({
+    queryKey: ["recurring-manual", customerId],
+    queryFn: () => fetchRecurringManual(customerId),
+    staleTime: 30_000,
+  });
+
+  const articleOptions = useMemo(() => {
+    const a = articles ?? [];
+    return [...a].sort((x, y) => x.name.localeCompare(y.name)).slice(0, 250);
+  }, [articles]);
+
+  const addStaple = useMutation({
+    mutationFn: () =>
+      upsertRecurringManual(customerId, {
+        sku: pickSku,
+        interval_days: intervalDays,
+        default_quantity: stapleQty,
+      }),
+    onSuccess: () => {
+      toast.success("Staple saved");
+      queryClient.invalidateQueries({ queryKey: ["recurring-manual", customerId] });
+      queryClient.invalidateQueries({ queryKey: ["recurring-eligible", customerId] });
+      setPickSku("");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removeStaple = useMutation({
+    mutationFn: (sku: string) => deleteRecurringManual(customerId, sku),
+    onSuccess: () => {
+      toast.success("Staple removed");
+      queryClient.invalidateQueries({ queryKey: ["recurring-manual", customerId] });
+      queryClient.invalidateQueries({ queryKey: ["recurring-eligible", customerId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const { data: catalogTags = [], isLoading: tagsLoading, isError: tagsError } = useQuery({
     queryKey: ["preference-tags", "v9"],
@@ -242,6 +296,97 @@ const ProfilePage = ({ onBack }: ProfilePageProps) => {
           </div>
         </div>
 
+        {/* Recurring staples */}
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <ShoppingBag className="w-5 h-5 text-primary" />
+            <h3 className="font-bold text-foreground text-base">Recurring staples</h3>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Tip: on <span className="font-medium text-foreground">Items</span>, use the loop icon on a product to set this in context. Here you can review or remove staples. The basket &quot;Recurring&quot; tab only lists items once that many days have passed since your last order. One-off purchases also get a default{" "}
+            <span className="font-medium text-foreground">14-day</span> rhythm until you save a staple for that SKU.
+          </p>
+
+          <div className="space-y-2 mb-5">
+            {(staples ?? []).length === 0 && (
+              <p className="text-sm text-muted-foreground italic">No manual staples yet — add one below.</p>
+            )}
+            {(staples ?? []).map((s) => (
+              <div
+                key={s.sku}
+                className="flex items-center gap-2 justify-between py-2 border-b border-border last:border-0"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground truncate">{s.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {s.sku} · every {s.interval_days} d · qty {s.default_quantity}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeStaple.mutate(s.sku)}
+                  className="p-2 rounded-lg hover:bg-muted text-destructive shrink-0"
+                  aria-label={`Remove ${s.name}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Add staple</p>
+          <div className="flex flex-col gap-3">
+            <select
+              value={pickSku}
+              onChange={(e) => setPickSku(e.target.value)}
+              className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground"
+            >
+              <option value="">Select product…</option>
+              {articleOptions.map((a) => (
+                <option key={a.sku} value={a.sku}>
+                  {a.name} ({a.sku})
+                </option>
+              ))}
+            </select>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Every (days)</label>
+                <select
+                  value={intervalDays}
+                  onChange={(e) => setIntervalDays(Number(e.target.value))}
+                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm min-w-[4.5rem]"
+                >
+                  {Array.from({ length: 30 }, (_, i) => i + 1).map((d) => (
+                    <option key={d} value={d}>
+                      {d} {d === 1 ? "day" : "days"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Default qty</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={stapleQty}
+                  onChange={(e) => setStapleQty(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+                  className="w-20 rounded-xl border border-border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={!pickSku || addStaple.isPending}
+                onClick={() => addStaple.mutate()}
+                className="rounded-full bg-primary text-primary-foreground text-sm font-semibold px-5 py-2 disabled:opacity-50"
+              >
+                Save staple
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Household */}
         <div className="bg-card border border-border rounded-2xl p-5">
           <h3 className="font-bold text-foreground text-base mb-1">Your Household</h3>
           <p className="text-sm text-muted-foreground mb-5">We'll tailor portions & packs</p>
