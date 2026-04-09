@@ -31,7 +31,7 @@ import {
   recurringItems,
   type DayExtraLine,
 } from "@/data/meals";
-import { fetchRecipes, shoppingFromMeals, matchDishes } from "@/lib/api";
+import { fetchRecipes, shoppingFromMeals, matchDishes, speakText } from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
 import { mergeMealAndExtraForDisplay, mergeLinesBySku } from "@/lib/mergeBasket";
 import { toast } from "@/components/ui/sonner";
@@ -74,6 +74,7 @@ const Index = () => {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
+  const spokenAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const appliedApiPlan = useRef(false);
 
@@ -499,9 +500,11 @@ const Index = () => {
     setAiError(null);
     setAiCatalogEmpty(false);
     setAiMatches([]);
+
+    let matches: { id: string; name: string; reason?: string; estimated_price?: number }[] = [];
     try {
       const res = await matchDishes(q);
-      const matches = res.matches ?? [];
+      matches = res.matches ?? [];
       setAiMatches(matches);
       setAiCatalogEmpty(matches.length === 0);
     } catch (e) {
@@ -513,9 +516,45 @@ const Index = () => {
           ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or check API logs."
           : `Could not reach match-dishes: ${err.slice(0, 200)}`
       );
+      setAiLoading(false);
+      return;
+    }
+
+    try {
+      const spokenText =
+        matches.length > 0
+          ? `I found ${matches.length} recipe ${matches.length === 1 ? "match" : "matches"}. ${matches
+              .slice(0, 3)
+              .map((match, index) => `${index + 1}. ${match.name}. ${match.reason ?? ""}`)
+              .join(" ")}`
+          : "I could not find any strong matches in the catalog. Try different wording or a different cuisine.";
+
+      const audioBlob = await speakText(spokenText);
+      const audioUrl = URL.createObjectURL(audioBlob);
+      if (spokenAudioRef.current) {
+        spokenAudioRef.current.pause();
+        spokenAudioRef.current.src = "";
+      }
+      const audio = new Audio(audioUrl);
+      spokenAudioRef.current = audio;
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      audio.onerror = () => URL.revokeObjectURL(audioUrl);
+      await audio.play().catch(() => URL.revokeObjectURL(audioUrl));
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      console.warn("Voice playback failed", err);
     } finally {
       setAiLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (spokenAudioRef.current) {
+        spokenAudioRef.current.pause();
+        spokenAudioRef.current.src = "";
+      }
+    };
   }, []);
 
   const handleSwapMeal = useCallback(
