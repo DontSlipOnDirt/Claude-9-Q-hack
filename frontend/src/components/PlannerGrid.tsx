@@ -14,7 +14,7 @@ interface PlannerGridProps {
   favouriteIds?: string[];
   onSwapMeal?: (id: string) => void;
   /** Drop an AI-suggested recipe onto a meal slot (not extras). */
-  onDropAiRecipe?: (mealId: string, recipe: { id: string; name: string }) => void;
+  onDropAiRecipe?: (mealId: string, recipe: { id: string; name: string; price: number }) => void;
 }
 
 const categoryLabel: Record<string, string> = {

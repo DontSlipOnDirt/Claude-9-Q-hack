@@ -11,6 +11,33 @@ from typing import Any
 from backend.db import Db
 
 
+def estimate_recipe_meal_price(db: Db, recipe_id: str) -> float:
+    """
+    Cheapest in-catalog article per ingredient × recipe line quantity (display estimate).
+    Matches the spirit of basket_recommender meal pricing without preference filters.
+    """
+    rid = str(recipe_id).strip()
+    if not rid:
+        return 0.0
+    row = db.row(
+        """
+        SELECT SUM(line_total) AS total
+        FROM (
+            SELECT CAST(ri.quantity AS INTEGER) * MIN(CAST(a.price AS REAL)) AS line_total
+            FROM recipe_ingredients ri
+            JOIN ingredient_articles ia ON ia.ingredient_id = ri.ingredient_id
+            JOIN articles a ON a.sku = ia.article_sku AND a.is_available = 1
+            WHERE ri.recipe_id = ?
+            GROUP BY ri.ingredient_id
+        ) t
+        """,
+        (rid,),
+    )
+    if not row or row.get("total") is None:
+        return 0.0
+    return round(float(row["total"]), 2)
+
+
 def load_env_file(path: str) -> None:
     if not os.path.exists(path):
         return
@@ -126,4 +153,13 @@ def match_dishes(
             "Missing OPENAI_KEY. Set it in openai.env as OPENAI_KEY=... or export it."
         )
     m = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    return call_openai(api_key, m, prompt)
+    result = call_openai(api_key, m, prompt)
+    matches = result.get("matches")
+    if isinstance(matches, list):
+        for item in matches:
+            if not isinstance(item, dict):
+                continue
+            rid = str(item.get("id", "")).strip()
+            if rid:
+                item["estimated_price"] = estimate_recipe_meal_price(db, rid)
+    return result

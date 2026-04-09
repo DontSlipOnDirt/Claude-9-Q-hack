@@ -74,7 +74,7 @@ export async function shoppingFromMeals(
 }
 
 export type MatchDishesResponse = {
-  matches: { id: string; name: string; reason?: string }[];
+  matches: { id: string; name: string; reason?: string; estimated_price?: number }[];
 };
 
 export async function matchDishes(

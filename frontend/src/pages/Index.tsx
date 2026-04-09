@@ -68,7 +68,9 @@ const Index = () => {
   const [easterPageOpen, setEasterPageOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  const [aiMatches, setAiMatches] = useState<{ id: string; name: string; reason?: string }[]>([]);
+  const [aiMatches, setAiMatches] = useState<
+    { id: string; name: string; reason?: string; estimated_price?: number }[]
+  >([]);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
@@ -534,7 +536,8 @@ const Index = () => {
   );
 
   const handleDropAiRecipeOnSlot = useCallback(
-    (mealId: string, recipe: { id: string; name: string }) => {
+    (mealId: string, recipe: { id: string; name: string; price: number }) => {
+      const mealPrice = Number.isFinite(recipe.price) ? Math.round(recipe.price * 100) / 100 : 0;
       setMealPlans((prev) =>
         prev.map((plan, pi) =>
           pi === activePlanIndex
@@ -547,7 +550,7 @@ const Index = () => {
                     recipeId: recipe.id,
                     name: recipe.name,
                     brand: "Picnic",
-                    price: 0,
+                    price: mealPrice,
                     weight: "1 serving",
                     image: "🍽️",
                     selected: true,
