@@ -16,7 +16,7 @@ const navItems = [
 
 const TopBar = ({ activeNav, onNavChange, userName = "U", onProfileClick }: TopBarProps) => (
   <header className="sticky top-0 z-50 bg-primary text-primary-foreground">
-    <div className="flex items-center justify-between px-4 py-2 max-w-6xl mx-auto">
+    <div className="flex items-center justify-between px-4 py-2 max-w-app mx-auto">
       <a href="#" className="flex items-center gap-2" onClick={() => onNavChange("planner")}>
         <div className="w-8 h-8 bg-primary-foreground rounded-lg flex items-center justify-center">
           <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">

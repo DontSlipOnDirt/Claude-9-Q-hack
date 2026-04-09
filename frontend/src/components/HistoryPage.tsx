@@ -3,7 +3,7 @@ import { pastOrders, recurringPurchaseHistory } from "@/data/meals";
 
 const HistoryPage = () => {
   return (
-    <div className="max-w-6xl mx-auto w-full px-4 py-6">
+    <div className="max-w-app mx-auto w-full px-4 py-6">
       {/* Recurring items chart */}
       <h2 className="text-xl font-bold text-foreground mb-4">Recurring Purchases</h2>
       <div className="bg-card border border-border rounded-xl p-4 mb-8 overflow-x-auto">

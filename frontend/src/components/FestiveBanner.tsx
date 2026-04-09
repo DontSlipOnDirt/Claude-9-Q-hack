@@ -6,7 +6,7 @@ interface FestiveBannerProps {
 
 const FestiveBanner = ({ onExplore }: FestiveBannerProps) => (
   <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border-b border-yellow-200">
-    <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center gap-3">
+    <div className="max-w-app mx-auto px-4 py-2.5 flex items-center gap-3">
       <span className="text-2xl">🐣</span>
       <div className="flex-1">
         <p className="text-sm font-bold text-foreground">Discover Easter Menus</p>

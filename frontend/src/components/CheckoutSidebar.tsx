@@ -2,16 +2,30 @@ import { useState } from "react";
 import { X, Plus, Minus, Trash2, RotateCcw, Clock, ShoppingCart, Package } from "lucide-react";
 import { DayPlan } from "@/data/meals";
 import { Dispatch, SetStateAction } from "react";
+
+const DEFAULT_AUTO_RECURRING_DAYS = 14;
 function BasketLineThumb({ image }: { image: string }) {
-  const isUrl = image.startsWith("http") || image.startsWith("/");
+  const [broken, setBroken] = useState(false);
+  const isUrl = (image.startsWith("http") || image.startsWith("/")) && !broken;
   if (isUrl) {
     return (
       <div className="w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-muted/50 ring-1 ring-border/20 shrink-0">
-        <img src={image} alt="" className="h-full w-full object-contain" loading="lazy" decoding="async" />
+        <img
+          src={image}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          decoding="async"
+          onError={() => setBroken(true)}
+        />
       </div>
     );
   }
-  return <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center text-lg shrink-0">{image}</div>;
+  return (
+    <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center text-lg shrink-0">
+      {broken ? "🛒" : image}
+    </div>
+  );
 }
 
 export interface BasketIngredient {
@@ -50,9 +64,22 @@ interface CheckoutSidebarProps {
   onRemoveIngredient: (id: string) => void;
   recurring: RecurringItemState[];
   onSetRecurring: Dispatch<SetStateAction<RecurringItemState[]>>;
+  onCheckout: () => void;
 }
 
-const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotPicker, basketIngredients, onUpdateIngredientQty, onRemoveIngredient, recurring, onSetRecurring }: CheckoutSidebarProps) => {
+const CheckoutSidebar = ({
+  isOpen,
+  onToggle,
+  mealPlan,
+  deliverySlot,
+  onOpenSlotPicker,
+  basketIngredients,
+  onUpdateIngredientQty,
+  onRemoveIngredient,
+  recurring,
+  onSetRecurring,
+  onCheckout,
+}: CheckoutSidebarProps) => {
   const [activeTab, setActiveTab] = useState<"ingredients" | "recurring">("ingredients");
 
   const ingredientsTotal = basketIngredients.reduce((s, i) => s + i.price * i.quantity, 0);
@@ -71,8 +98,9 @@ const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotP
         style={{ right: isOpen ? "400px" : "0" }}
       >
         <ShoppingCart className="w-5 h-5" />
-        <span className="text-xs font-bold">{grandTotal.toFixed(2).replace(".", ",")} €</span>
-        <span className="text-[10px] opacity-80">{basketIngredients.length + recurring.filter((r) => r.added).length}</span>
+        <span className="text-[10px] font-bold opacity-90 tabular-nums">
+          {basketIngredients.length + recurring.filter((r) => r.added).length}
+        </span>
       </button>
 
       <div
@@ -105,7 +133,7 @@ const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotP
             }`}
           >
             <RotateCcw className="w-4 h-4" />
-            Recurring ({recurring.filter((r) => r.added).length})
+            Recurring ({recurring.length})
           </button>
         </div>
 
@@ -149,7 +177,15 @@ const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotP
             </div>
           ) : (
             <div className="px-4 pt-3 pb-2">
-              <p className="text-xs text-muted-foreground mb-3">Suggested items — running low soon</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                Staples due now — from your settings & purchase history (hidden until the interval has passed).
+              </p>
+              {recurring.length === 0 && (
+                <p className="text-sm text-muted-foreground italic py-6">
+                  Nothing due right now. Add staples under Profile, or buy an item once — it can reappear after{" "}
+                  {DEFAULT_AUTO_RECURRING_DAYS} days by default.
+                </p>
+              )}
               {recurring.map((item) => (
                 <div key={item.id} className="flex items-center gap-3 py-3 border-b border-border">
                   <BasketLineThumb image={item.image} />
@@ -169,7 +205,16 @@ const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotP
                     </div>
                   ) : (
                     <button
-                      onClick={() => onSetRecurring((p) => p.map((r) => r.id === item.id ? { ...r, added: true, quantity: 1 } : r))}
+                      type="button"
+                      onClick={() =>
+                        onSetRecurring((p) =>
+                          p.map((r) =>
+                            r.id === item.id
+                              ? { ...r, added: true, quantity: Math.max(1, r.quantity) }
+                              : r
+                          )
+                        )
+                      }
                       className="rounded-full p-1.5 bg-secondary text-muted-foreground"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -204,8 +249,12 @@ const CheckoutSidebar = ({ isOpen, onToggle, mealPlan, deliverySlot, onOpenSlotP
             <span className="font-bold text-foreground text-lg">Total</span>
             <span className="font-bold text-foreground text-lg">{grandTotal.toFixed(2).replace(".", ",")} €</span>
           </div>
-          <button className="w-full bg-primary text-primary-foreground font-semibold py-3 rounded-full text-sm">
-            Delivery by {deliverySlot} →
+          <button
+            type="button"
+            onClick={onCheckout}
+            className="w-full bg-primary text-primary-foreground font-semibold py-3 rounded-full text-sm hover:opacity-95 active:opacity-90 transition-opacity"
+          >
+            Checkout
           </button>
         </div>
       </div>

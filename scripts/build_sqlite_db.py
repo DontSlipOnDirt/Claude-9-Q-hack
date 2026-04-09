@@ -25,6 +25,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
         DROP TABLE IF EXISTS recipe_tags;
         DROP TABLE IF EXISTS article_tags;
+        DROP TABLE IF EXISTS customer_recurring_items;
         DROP TABLE IF EXISTS customer_preferences;
         DROP TABLE IF EXISTS preference_tags;
         DROP TABLE IF EXISTS ingredient_articles;
@@ -208,6 +209,18 @@ def create_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(tag_id) REFERENCES preference_tags(id)
         );
 
+        CREATE TABLE customer_recurring_items (
+            customer_id TEXT NOT NULL,
+            sku TEXT NOT NULL,
+            interval_days INTEGER NOT NULL,
+            default_quantity INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'manual',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (customer_id, sku),
+            FOREIGN KEY (customer_id) REFERENCES customers(id),
+            FOREIGN KEY (sku) REFERENCES articles(sku)
+        );
+
         CREATE TABLE article_tags (
             article_sku TEXT NOT NULL,
             tag_id TEXT NOT NULL,
@@ -279,6 +292,7 @@ def main() -> None:
         load_csv(conn, "article_allergy_labels", "article_allergy_labels.csv")
         load_csv(conn, "ingredient_articles", "ingredient_articles.csv")
         load_csv(conn, "customer_preferences", "customer_preferences.csv")
+        load_csv(conn, "customer_recurring_items", "customer_recurring_items.csv")
         load_csv(conn, "article_tags", "article_tags.csv")
         load_csv(conn, "recipe_tags", "recipe_tags.csv")
 

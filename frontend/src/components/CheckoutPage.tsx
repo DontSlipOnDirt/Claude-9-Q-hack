@@ -19,6 +19,7 @@ interface CheckoutPageProps {
   onSelectSlot: (slot: string) => void;
   basketIngredients: BasketIngredient[];
   recurringItems: RecurringItemState[];
+  onPlaceOrder: () => Promise<void>;
 }
 
 function OrderLineImage({ image }: { image: string }) {
@@ -28,9 +29,17 @@ function OrderLineImage({ image }: { image: string }) {
   return <span>{image}</span>;
 }
 
-const CheckoutPage = ({ onBack, deliverySlot, onSelectSlot, basketIngredients, recurringItems }: CheckoutPageProps) => {
+const CheckoutPage = ({
+  onBack,
+  deliverySlot,
+  onSelectSlot,
+  basketIngredients,
+  recurringItems,
+  onPlaceOrder,
+}: CheckoutPageProps) => {
   const [slotOpen, setSlotOpen] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
+  const [placing, setPlacing] = useState(false);
 
   const ingredientsTotal = basketIngredients.reduce((s, i) => s + i.price * i.quantity, 0);
   const recurringTotal = recurringItems.filter((r) => r.added).reduce((s, r) => s + r.price * r.quantity, 0);
@@ -179,10 +188,20 @@ const CheckoutPage = ({ onBack, deliverySlot, onSelectSlot, basketIngredients, r
       {/* Place order button */}
       <div className="sticky bottom-0 bg-card border-t border-border px-4 py-4 max-w-2xl mx-auto w-full">
         <button
-          onClick={() => setOrderPlaced(true)}
-          className="w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-full text-sm"
+          type="button"
+          disabled={placing}
+          onClick={async () => {
+            setPlacing(true);
+            try {
+              await onPlaceOrder();
+              setOrderPlaced(true);
+            } finally {
+              setPlacing(false);
+            }
+          }}
+          className="w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-full text-sm disabled:opacity-60 disabled:pointer-events-none hover:opacity-95 active:opacity-90 transition-opacity"
         >
-          Place Order — {grandTotal.toFixed(2).replace(".", ",")} €
+          {placing ? "Placing order…" : `Place Order — ${grandTotal.toFixed(2).replace(".", ",")} €`}
         </button>
       </div>
     </div>

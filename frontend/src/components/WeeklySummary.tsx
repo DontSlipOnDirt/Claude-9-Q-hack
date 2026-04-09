@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Utensils, Euro, Sparkles } from "lucide-react";
+import { Utensils, Euro, Flame, Sparkles } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { DayPlan } from "@/data/meals";
 
@@ -18,6 +18,8 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
     if (count === 0) return null;
 
     const avgPrice = selected.reduce((s, m) => s + m.price, 0) / count;
+    const calVals = selected.map((m) => m.calories).filter((c): c is number => typeof c === "number" && c > 0);
+    const avgCal = calVals.length ? Math.round(calVals.reduce((s, c) => s + c, 0) / calVals.length) : 0;
 
     const names = selected.map((m) => m.name.toLowerCase());
     const cuisineKeywords = ["Greek", "Asian", "Italian", "Mediterranean", "Thai", "Mexican", "Indian", "German", "French"];
@@ -48,36 +50,41 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
       { name: "Sugar", value: sugar || 1 },
     ];
 
-    return { count, avgPrice, cuisineText, chartData };
+    return { count, avgPrice, avgCal, cuisineText, chartData };
   }, [mealPlan]);
 
   if (!stats) return null;
 
   return (
-    <div className="max-w-6xl mx-auto w-full px-4 mb-4">
+    <div className="max-w-app mx-auto w-full px-4 mb-4">
       <div className="bg-gradient-to-r from-primary/10 via-accent/10 to-primary/5 border border-primary/20 rounded-2xl p-5">
         <div className="flex items-center gap-2 mb-3">
           <Sparkles className="w-5 h-5 text-primary" />
-          <h3 className="font-bold text-foreground text-base">Your Week at a Glance</h3>
+          <h3 className="font-bold text-foreground text-lg">Your Week at a Glance</h3>
         </div>
 
-        <p className="text-sm text-muted-foreground mb-4">
+        <p className="text-base text-muted-foreground mb-4">
           This week features <span className="font-semibold text-foreground">{stats.cuisineText}</span> inspired meals across{" "}
           <span className="font-semibold text-foreground">{stats.count} dishes</span> — enjoy a delicious variety!
         </p>
 
         <div className="flex gap-4 items-center">
           {/* Stats cards */}
-          <div className="flex-1 grid grid-cols-2 gap-3">
+          <div className="flex-1 grid grid-cols-3 gap-3">
             <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
               <Utensils className="w-4 h-4 text-primary mx-auto mb-1" />
-              <p className="text-lg font-bold text-foreground">{stats.count}</p>
-              <p className="text-[11px] text-muted-foreground">Meals planned</p>
+              <p className="text-2xl font-bold text-foreground">{stats.count}</p>
+              <p className="text-xs text-muted-foreground">Meals planned</p>
+            </div>
+            <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
+              <Flame className="w-4 h-4 text-destructive mx-auto mb-1" />
+              <p className="text-2xl font-bold text-foreground">{stats.avgCal > 0 ? stats.avgCal : "—"}</p>
+              <p className="text-xs text-muted-foreground">Avg. kcal/meal</p>
             </div>
             <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
               <Euro className="w-4 h-4 text-accent mx-auto mb-1" />
-              <p className="text-lg font-bold text-foreground">{stats.avgPrice.toFixed(2)} €</p>
-              <p className="text-[11px] text-muted-foreground">Avg. price/meal</p>
+              <p className="text-2xl font-bold text-foreground">{stats.avgPrice.toFixed(2)} €</p>
+              <p className="text-xs text-muted-foreground">Avg. price/meal</p>
             </div>
           </div>
 
@@ -103,15 +110,15 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-sm font-bold text-foreground">{stats.count}</span>
-                <span className="text-[9px] text-muted-foreground">meals</span>
+                <span className="text-base font-bold text-foreground">{stats.count}</span>
+                <span className="text-xs text-muted-foreground">meals</span>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
               {stats.chartData.map((d, i) => (
                 <div key={d.name} className="flex items-center gap-1">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[i] }} />
-                  <span className="text-[9px] text-muted-foreground">{d.name}</span>
+                  <span className="text-xs text-muted-foreground">{d.name}</span>
                 </div>
               ))}
             </div>

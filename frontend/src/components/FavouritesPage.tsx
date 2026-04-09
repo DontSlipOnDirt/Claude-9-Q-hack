@@ -6,7 +6,7 @@ interface FavouritesPageProps {
 }
 
 const FavouritesPage = ({ favourites, onRemove }: FavouritesPageProps) => (
-  <div className="max-w-6xl mx-auto w-full px-4 py-6">
+  <div className="max-w-app mx-auto w-full px-4 py-6">
     <h2 className="text-xl font-bold text-foreground mb-4">My Favourites</h2>
     {favourites.length === 0 ? (
       <div className="text-center py-16 text-muted-foreground">

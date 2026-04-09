@@ -2,15 +2,39 @@ import { inferMealTimesFromName } from "@/lib/mealTimeHints";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
+function messageFromErrorBody(text: string, fallback: string): string {
+  const raw = text.trim();
+  if (!raw) return fallback;
+  try {
+    const j = JSON.parse(raw) as { detail?: unknown };
+    if (typeof j.detail === "string") return j.detail;
+    if (Array.isArray(j.detail)) {
+      const parts = j.detail
+        .map((x: { msg?: string }) => (typeof x?.msg === "string" ? x.msg : null))
+        .filter(Boolean) as string[];
+      if (parts.length) return parts.join("; ");
+    }
+  } catch {
+    /* use raw body */
+  }
+  return raw;
+}
+
 async function parseJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(messageFromErrorBody(text, res.statusText || String(res.status)));
   }
   return res.json() as Promise<T>;
 }
 
-export async function getHealth(): Promise<{ status: string }> {
+export type HealthResponse = {
+  status: string;
+  /** Present when this server build includes GET/PUT recurring-manual (stale processes omit it). */
+  recurring_staples_api?: boolean;
+};
+
+export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch("/api/health");
   return parseJson(res);
 }
@@ -78,10 +102,25 @@ export type ShoppingDetailRow = {
   ingredient_name: string;
   sku: string;
   article_name: string;
+  /** From mapped catalog article; may be `/catalog/*.png` or remote URL. */
+  image_url?: string | null;
   quantity: number;
   unit_price: number;
   line_total: number;
 };
+
+/** First ingredient line image for planner thumbnails (avoids placeholder URLs). */
+export function imageUrlFromShoppingDetailRow(row: Pick<ShoppingDetailRow, "image_url" | "sku">): string {
+  const u = typeof row.image_url === "string" ? row.image_url.trim() : "";
+  if (
+    u &&
+    !u.includes("placehold.co") &&
+    (u.startsWith("http") || u.startsWith("/"))
+  ) {
+    return u;
+  }
+  return `/catalog/${encodeURIComponent(row.sku)}.png`;
+}
 
 export type ShoppingCheckoutLine = {
   sku: string;
@@ -125,6 +164,128 @@ export async function matchDishes(
       dietary_needs: dietaryNeeds?.length ? dietaryNeeds : undefined,
     }),
   });
+  return parseJson(res);
+}
+
+/** Seed customer (`demo@picnic.com`) — matches `data/customers.csv`. */
+export const PICNIC_DEMO_CUSTOMER_ID = "eeeeeeee-eeee-4eee-8eee-000000000001";
+
+export type ApiDelivery = {
+  id: string;
+  timeslot: string;
+  delivery_moment?: string | null;
+  trip_id?: string | null;
+  hub_id?: string | null;
+  fc_id?: string | null;
+  hub_address?: string | null;
+  fc_address?: string | null;
+};
+
+export async function fetchDeliveries(): Promise<ApiDelivery[]> {
+  const res = await fetch("/api/deliveries");
+  return parseJson(res);
+}
+
+export type CreateOrderLinePayload = { sku: string; quantity: number };
+
+export type CreateOrderPayload = {
+  customer_id: string;
+  delivery_id: string;
+  status: string;
+  creation_date: string;
+  lines: CreateOrderLinePayload[];
+  recipe_ids: string[];
+};
+
+export type CreateOrderResult = {
+  order_id: string;
+  total_price: number;
+  lines: { id: string; sku: string; quantity: number; subtotal: number }[];
+};
+
+export async function createOrder(body: CreateOrderPayload): Promise<CreateOrderResult> {
+  const res = await fetch("/api/orders", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(body),
+  });
+  return parseJson(res);
+}
+
+export type RecurringEligibleItem = {
+  sku: string;
+  name: string;
+  price: number;
+  image_url: string | null;
+  category: string;
+  interval_days: number;
+  source: string;
+  last_ordered_at: string | null;
+  suggested_quantity: number;
+  eligible: boolean;
+  next_eligible_after: string | null;
+};
+
+export type RecurringItemsResponse = {
+  items: RecurringEligibleItem[];
+  default_auto_interval_days: number;
+  reference_date: string;
+};
+
+export async function fetchRecurringEligible(
+  customerId: string,
+  asOf?: string
+): Promise<RecurringItemsResponse> {
+  const q = new URLSearchParams();
+  if (asOf) q.set("as_of", asOf);
+  const qs = q.toString();
+  const res = await fetch(
+    `/api/customers/${encodeURIComponent(customerId)}/recurring-items${qs ? `?${qs}` : ""}`
+  );
+  return parseJson(res);
+}
+
+export type RecurringManualRow = {
+  sku: string;
+  interval_days: number;
+  default_quantity: number;
+  source: string;
+  enabled: number;
+  name: string;
+  price: number;
+  image_url: string | null;
+  category: string;
+};
+
+export async function fetchRecurringManual(customerId: string): Promise<RecurringManualRow[]> {
+  const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/recurring-manual`);
+  return parseJson(res);
+}
+
+export async function upsertRecurringManual(
+  customerId: string,
+  body: { sku: string; interval_days: number; default_quantity?: number }
+): Promise<{ status: string; sku: string }> {
+  const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/recurring-manual`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      sku: body.sku,
+      interval_days: body.interval_days,
+      default_quantity: body.default_quantity ?? 1,
+    }),
+  });
+  return parseJson(res);
+}
+
+export async function deleteRecurringManual(
+  customerId: string,
+  sku: string
+): Promise<{ status: string }> {
+  const res = await fetch(
+    `/api/customers/${encodeURIComponent(customerId)}/recurring-manual/${encodeURIComponent(sku)}`,
+    { method: "DELETE" }
+  );
   return parseJson(res);
 }
 

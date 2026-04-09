@@ -55,7 +55,7 @@ def build_shopping_from_meals(db: Db, meals: list[Any]) -> dict[str, Any]:
             """
             SELECT r.name AS recipe_name, ri.quantity AS ingredient_qty,
                    i.name AS ingredient_name, a.sku, a.name AS article_name,
-                   a.price AS unit_price
+                   a.price AS unit_price, a.image_url AS image_url
             FROM recipe_ingredients ri
             JOIN recipes r ON r.id = ri.recipe_id
             JOIN ingredients i ON i.id = ri.ingredient_id
@@ -79,6 +79,7 @@ def build_shopping_from_meals(db: Db, meals: list[Any]) -> dict[str, Any]:
                     "ingredient_name": row["ingredient_name"],
                     "sku": sku,
                     "article_name": row["article_name"],
+                    "image_url": row.get("image_url"),
                     "quantity": qty,
                     "unit_price": unit,
                     "line_total": line_total,

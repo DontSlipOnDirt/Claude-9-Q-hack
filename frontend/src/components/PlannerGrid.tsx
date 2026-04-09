@@ -35,6 +35,30 @@ const cardThemes = [
 
 const CARDS_PER_PAGE = 3;
 
+function PlannerMealThumb({ image }: { image: string }) {
+  const [broken, setBroken] = useState(false);
+  const isRemoteOrLocal = (image.startsWith("http") || image.startsWith("/")) && !broken;
+  if (isRemoteOrLocal) {
+    return (
+      <div className="w-11 h-11 bg-muted/40 rounded-lg overflow-hidden flex-shrink-0 shadow-sm ring-1 ring-border/25">
+        <img
+          src={image}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+          onError={() => setBroken(true)}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="w-11 h-11 bg-background rounded-lg flex items-center justify-center text-xl flex-shrink-0 shadow-sm ring-1 ring-border/20">
+      {broken ? "🍽️" : image}
+    </div>
+  );
+}
+
 const PlannerGrid = ({
   filteredPlan,
   activeMealFilters,
@@ -81,7 +105,7 @@ const PlannerGrid = ({
                 key={day.day}
                 className={`${theme.bg} ${theme.border} border rounded-2xl p-5 flex flex-col transition-all hover:shadow-lg`}
               >
-                <h3 className="text-center font-bold text-foreground text-lg mb-4 pb-3 border-b border-border/50">
+                <h3 className="text-center font-bold text-foreground text-xl mb-4 pb-3 border-b border-border/50">
                   {day.day}
                 </h3>
 
@@ -98,7 +122,7 @@ const PlannerGrid = ({
                     const showRemove = isExtras ? extraUnits > 0 : !isEmptySlot;
                     return (
                       <div key={cat}>
-                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
                           {categoryLabel[cat]}
                         </p>
                         <div
@@ -181,9 +205,7 @@ const PlannerGrid = ({
                           </div>
 
                           <div className="flex items-center gap-3">
-                            <div className="w-11 h-11 bg-background rounded-lg flex items-center justify-center text-xl flex-shrink-0 shadow-sm">
-                              {meal.image}
-                            </div>
+                            <PlannerMealThumb image={meal.image} />
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-semibold text-foreground truncate">
                                 {isExtras
@@ -195,7 +217,7 @@ const PlannerGrid = ({
                                     : meal.name}
                               </p>
                               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                <span className="text-sm font-bold text-foreground">
+                                <span className="text-base font-bold text-foreground">
                                   {isExtras
                                     ? extraUnits > 0
                                       ? `${extraTotal.toFixed(2).replace(".", ",")} €`
@@ -203,7 +225,12 @@ const PlannerGrid = ({
                                     : `${meal.price.toFixed(2).replace(".", ",")} €`}
                                 </span>
                                 {isExtras && extraUnits > 0 && (
-                                  <span className="text-[10px] text-muted-foreground">Groceries</span>
+                                  <span className="text-xs text-muted-foreground">Groceries</span>
+                                )}
+                                {!isExtras && meal.calories && (
+                                  <span className="text-xs text-muted-foreground">
+                                    🔥 {meal.calories} kcal
+                                  </span>
                                 )}
                               </div>
                               {!isExtras && hasVisibleDietStickers(meal.dietTags) && (
@@ -248,14 +275,14 @@ const PlannerGrid = ({
       {/* Restore hidden columns */}
       {visibleCategories.length < 4 && (
         <div className="flex items-center gap-2 px-3 flex-wrap">
-          <span className="text-xs text-muted-foreground">Hidden:</span>
+          <span className="text-sm text-muted-foreground">Hidden:</span>
           {["breakfast", "lunch", "dinner", "extras"]
             .filter((c) => !visibleCategories.includes(c))
             .map((cat) => (
               <button
                 key={cat}
                 onClick={() => onRemoveColumn(cat)}
-                className="text-xs font-medium text-primary bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
+                className="text-sm font-medium text-primary bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
               >
                 + Show {categoryLabel[cat]}
               </button>
