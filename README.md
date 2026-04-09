@@ -60,6 +60,15 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 Add repo-root `openai.env` with `OPENAI_KEY=` (and optional `OPENAI_MODEL=`) so `POST /api/catalog/match-dishes` and the in-app **AI Meal Assistant** work.
 
+### Optional: Voice transcription
+
+Add repo-root `.env` values for ElevenLabs voice input:
+
+- `ELEVENLABS_API_KEY`
+- `ELEVENLABS_STT_MODEL` (defaults to `scribe_v2`)
+
+The AI panel's microphone button records from your browser, sends the clip to ElevenLabs speech-to-text, and submits the transcript into the meal assistant.
+
 ## API highlights
 
 - `GET /api/health`

@@ -30,7 +30,7 @@ import {
   recurringItems,
   type DayExtraLine,
 } from "@/data/meals";
-import { fetchRecipes, shoppingFromMeals, matchDishes } from "@/lib/api";
+import { fetchRecipes, shoppingFromMeals, matchDishes, speakText } from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
 import { mergeMealAndExtraForDisplay, mergeLinesBySku } from "@/lib/mergeBasket";
 import { loadHouseholdProfile, HOUSEHOLD_PROFILE_SAVED_EVENT } from "@/lib/profileStorage";
@@ -83,6 +83,7 @@ const Index = () => {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
+  const spokenAudioRef = useRef<HTMLAudioElement | null>(null);
 
   /** Bumps when household profile is saved so the API-backed week plan refilters by diet. */
   const [plannerDietKey, setPlannerDietKey] = useState(0);
@@ -622,9 +623,11 @@ const Index = () => {
     setAiError(null);
     setAiCatalogEmpty(false);
     setAiMatches([]);
+
+    let matches: { id: string; name: string; reason?: string; estimated_price?: number }[] = [];
     try {
-      const res = await matchDishes(q, undefined, loadHouseholdProfile().selectedDiets);
-      const matches = res.matches ?? [];
+      const res = await matchDishes(q);
+      matches = res.matches ?? [];
       setAiMatches(matches);
       setAiCatalogEmpty(matches.length === 0);
     } catch (e) {
@@ -636,10 +639,63 @@ const Index = () => {
           ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or OPENAI_API_KEY, or check API logs."
           : `Could not reach match-dishes: ${err.slice(0, 200)}`
       );
+      setAiLoading(false);
+      return;
+    }
+
+    try {
+      const spokenText =
+        matches.length > 0
+          ? `I found ${matches.length} recipe ${matches.length === 1 ? "match" : "matches"}. ${matches
+              .slice(0, 3)
+              .map((match, index) => `${index + 1}. ${match.name}. ${match.reason ?? ""}`)
+              .join(" ")}`
+          : "I could not find any strong matches in the catalog. Try different wording or a different cuisine.";
+
+      const audioBlob = await speakText(spokenText);
+      const audioUrl = URL.createObjectURL(audioBlob);
+      if (spokenAudioRef.current) {
+        spokenAudioRef.current.pause();
+        spokenAudioRef.current.src = "";
+      }
+      const audio = new Audio(audioUrl);
+      spokenAudioRef.current = audio;
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      audio.onerror = () => URL.revokeObjectURL(audioUrl);
+      await audio.play().catch(() => URL.revokeObjectURL(audioUrl));
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      console.warn("Voice playback failed", err);
     } finally {
       setAiLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (spokenAudioRef.current) {
+        spokenAudioRef.current.pause();
+        spokenAudioRef.current.src = "";
+      }
+    };
+  }, []);
+
+  const handleSwapMeal = useCallback(
+    (oldId: string, newMeal: Meal) => {
+      setMealPlans((prev) =>
+        prev.map((plan, pi) =>
+          pi === activePlanIndex
+            ? plan.map((day) => ({
+                ...day,
+                meals: day.meals.map((m) => (m.id === oldId ? { ...newMeal, selected: true } : m)),
+              }))
+            : plan
+        )
+      );
+      setSwapMealId(null);
+    },
+    [activePlanIndex]
+  );
 
   const handleDropAiRecipeOnSlot = useCallback(
     (mealId: string, recipe: { id: string; name: string; price: number }) => {

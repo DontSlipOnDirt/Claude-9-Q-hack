@@ -127,3 +127,31 @@ export async function matchDishes(
   });
   return parseJson(res);
 }
+
+export type VoiceTokenResponse = {
+  token: string;
+  model_id: string;
+};
+
+export async function getVoiceToken(): Promise<VoiceTokenResponse> {
+  const res = await fetch("/api/voice/token", {
+    method: "POST",
+    headers: jsonHeaders,
+  });
+  return parseJson(res);
+}
+
+export async function speakText(text: string): Promise<Blob> {
+  const res = await fetch("/api/voice/speak", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ text }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || res.statusText);
+  }
+
+  return res.blob();
+}

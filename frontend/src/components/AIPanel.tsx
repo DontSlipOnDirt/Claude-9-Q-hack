@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { Send, Sparkles, Mic, MicOff } from "lucide-react";
+import { Loader2, Send, Sparkles, Mic, MicOff } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
+import { useElevenLabsVoiceRecorder } from "@/hooks/useElevenLabsVoiceRecorder";
 
 const presets = [
   { label: "High protein week", prompt: "Suggest a high-protein meal plan for this week" },
@@ -15,16 +17,19 @@ interface AIPanelProps {
 
 const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
   const [input, setInput] = useState("");
-  const [voiceActive, setVoiceActive] = useState(false);
-
-  if (!isOpen) return null;
-
   const send = (text: string) => {
     const q = text.trim();
     if (!q || loading) return;
     setInput("");
     onSubmitPrompt(q);
   };
+
+  const { toggle, status, transcript, error, isRecording } = useElevenLabsVoiceRecorder({
+    onTranscript: send,
+    onError: (message) => toast.error(message),
+  });
+
+  if (!isOpen) return null;
 
   return (
     <div className="bg-accent/5 border-b border-border px-4 py-4">
@@ -34,27 +39,52 @@ const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
           <span className="font-semibold text-sm text-foreground">AI Meal Assistant</span>
           <button
             type="button"
-            onClick={() => setVoiceActive((v) => !v)}
-            className={`ml-2 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              voiceActive ? "bg-primary text-primary-foreground animate-pulse" : "bg-secondary text-secondary-foreground border border-border"
+            onClick={() => void toggle()}
+            disabled={(loading && !isRecording) || status === "transcribing"}
+            className={`ml-2 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
+              isRecording
+                ? "bg-primary text-primary-foreground animate-pulse"
+                : status === "transcribing"
+                  ? "bg-secondary text-secondary-foreground border border-border"
+                  : "bg-secondary text-secondary-foreground border border-border"
             }`}
           >
-            {voiceActive ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-            {voiceActive ? "Stop listening" : "Voice agent"}
+            {status === "transcribing" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : isRecording ? (
+              <MicOff className="w-3.5 h-3.5" />
+            ) : (
+              <Mic className="w-3.5 h-3.5" />
+            )}
+            {isRecording ? "Stop & transcribe" : status === "transcribing" ? "Transcribing..." : "Voice agent"}
           </button>
         </div>
-        {voiceActive && (
-          <div className="mb-3 p-3 rounded-lg bg-primary/5 border border-primary/20 flex items-center gap-3">
-            <div className="flex gap-1">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div
-                  key={i}
-                  className="w-1 bg-primary rounded-full animate-pulse"
-                  style={{ height: `${12 + Math.random() * 16}px`, animationDelay: `${i * 0.1}s` }}
-                />
-              ))}
+        {(isRecording || status === "transcribing" || transcript || error) && (
+          <div className="mb-3 p-3 rounded-lg bg-primary/5 border border-primary/20 flex items-start gap-3">
+            <div className="pt-0.5">
+              {status === "transcribing" ? (
+                <Loader2 className="w-4 h-4 text-primary animate-spin" />
+              ) : (
+                <div className="flex gap-1 items-end h-5">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div
+                      key={i}
+                      className="w-1 bg-primary rounded-full animate-pulse"
+                      style={{ height: `${12 + i * 2}px`, animationDelay: `${i * 0.08}s` }}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-            <span className="text-sm text-foreground">Listening… speak your meal preferences</span>
+            <div className="min-w-0">
+              <span className="block text-sm text-foreground">
+                {status === "transcribing"
+                  ? "Sending audio to ElevenLabs..."
+                  : "Listening... speak your meal preferences"}
+              </span>
+              {transcript && <p className="mt-1 text-xs text-muted-foreground break-words">{transcript}</p>}
+              {error && <p className="mt-1 text-xs text-destructive break-words">{error}</p>}
+            </div>
           </div>
         )}
         <div className="flex flex-wrap gap-1.5 mb-3">
