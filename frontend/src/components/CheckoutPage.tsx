@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, MapPin, CreditCard, ChevronDown } from "lucide-react";
+import { ArrowLeft, Clock, MapPin, CreditCard, ChevronDown, CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 import { deliverySlots } from "@/data/meals";
 import { BasketIngredient } from "@/components/CheckoutSidebar";
@@ -30,12 +30,26 @@ function OrderLineImage({ image }: { image: string }) {
 
 const CheckoutPage = ({ onBack, deliverySlot, onSelectSlot, basketIngredients, recurringItems }: CheckoutPageProps) => {
   const [slotOpen, setSlotOpen] = useState(false);
+  const [orderPlaced, setOrderPlaced] = useState(false);
 
   const ingredientsTotal = basketIngredients.reduce((s, i) => s + i.price * i.quantity, 0);
   const recurringTotal = recurringItems.filter((r) => r.added).reduce((s, r) => s + r.price * r.quantity, 0);
   const subtotal = ingredientsTotal + recurringTotal;
   const deliveryFee = 1.99;
   const grandTotal = subtotal + deliveryFee;
+
+  if (orderPlaced) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center px-6">
+        <div className="text-center max-w-md mx-auto">
+          <CheckCircle2 className="mx-auto h-24 w-24 text-emerald-500" strokeWidth={1.75} />
+          <h2 className="mt-6 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl">It&apos;s on its way!</h2>
+          <p className="mt-4 text-lg text-slate-600">Your order has been placed and is being prepared for delivery.</p>
+          <p className="mt-3 text-sm font-medium text-slate-500">Delivery slot: {deliverySlot}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -164,7 +178,10 @@ const CheckoutPage = ({ onBack, deliverySlot, onSelectSlot, basketIngredients, r
 
       {/* Place order button */}
       <div className="sticky bottom-0 bg-card border-t border-border px-4 py-4 max-w-2xl mx-auto w-full">
-        <button className="w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-full text-sm">
+        <button
+          onClick={() => setOrderPlaced(true)}
+          className="w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-full text-sm"
+        >
           Place Order — {grandTotal.toFixed(2).replace(".", ",")} €
         </button>
       </div>
