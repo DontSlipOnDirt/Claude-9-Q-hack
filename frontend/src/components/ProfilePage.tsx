@@ -59,7 +59,8 @@ const ProfilePage = ({ customerId, onBack }: ProfilePageProps) => {
   const [profile, setProfile] = useState<SavedHouseholdProfile>(() => loadHouseholdProfile());
   const [spicyLearning, setSpicyLearning] = useState(() => loadSpicyLearning());
   const [addOpen, setAddOpen] = useState(false);
-  const { adults, children, pets, selectedDiets, dietCounts } = profile;
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const { adults, children, pets, selectedDiets, dietCounts, avatarDataUrl } = profile;
 
   const [pickSku, setPickSku] = useState("");
   const [intervalDays, setIntervalDays] = useState(14);
@@ -213,6 +214,18 @@ const ProfilePage = ({ customerId, onBack }: ProfilePageProps) => {
     onBack();
   };
 
+  const onAvatarFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const url = await imageFileToAvatarDataUrl(file);
+    if (!url) {
+      toast.error("Could not use that image. Try another JPG or PNG (not too large).");
+      return;
+    }
+    setField("avatarDataUrl", url);
+  };
+
   const Counter = ({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) => (
     <div className="mb-5">
       <p className="text-sm font-medium text-foreground mb-2">{label}</p>
@@ -238,13 +251,48 @@ const ProfilePage = ({ customerId, onBack }: ProfilePageProps) => {
       </div>
 
       <div className="max-w-lg mx-auto w-full px-4 py-6 flex-1 space-y-8">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-            <User className="w-8 h-8 text-primary" />
-          </div>
-          <div>
-            <h3 className="font-bold text-foreground text-lg">Max Mustermann</h3>
-            <p className="text-sm text-muted-foreground">max@example.com</p>
+        <div className="flex items-start gap-4">
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="sr-only"
+            aria-label="Choose profile photo"
+            onChange={onAvatarFile}
+          />
+          <button
+            type="button"
+            onClick={() => avatarInputRef.current?.click()}
+            className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0 ring-2 ring-border hover:ring-primary/40 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            title="Change profile photo"
+          >
+            {avatarDataUrl ? (
+              <img src={avatarDataUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <User className="w-9 h-9 text-primary" />
+            )}
+          </button>
+          <div className="min-w-0 pt-0.5">
+            <h3 className="font-bold text-foreground text-lg">Sarah Schneider</h3>
+            <p className="text-sm text-muted-foreground">sarah.schneider@example.com</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                className="text-sm font-semibold text-primary hover:underline"
+              >
+                {avatarDataUrl ? "Change photo" : "Add photo"}
+              </button>
+              {avatarDataUrl ? (
+                <button
+                  type="button"
+                  onClick={() => setField("avatarDataUrl", undefined)}
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                >
+                  Remove photo
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -403,6 +451,23 @@ const ProfilePage = ({ customerId, onBack }: ProfilePageProps) => {
               </button>
             </div>
           )}
+
+          <div className="mb-5 rounded-xl border border-border bg-muted/30 px-4 py-3">
+            <p className="text-sm text-foreground leading-snug">
+              The planner learns from what you keep, swap away, favourite, or add to your basket — then ranks recipes for
+              new weeks and swaps. Reset if you want a fresh start.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                resetRecipePreferences();
+                toast.success("Learned tastes cleared — your week plan was rebuilt.");
+              }}
+              className="mt-3 text-sm font-semibold text-primary hover:underline"
+            >
+              Reset learned recipe tastes
+            </button>
+          </div>
 
           {selectedDiets.length > 0 && (
             <div>
