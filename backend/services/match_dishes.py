@@ -9,6 +9,7 @@ import urllib.request
 from typing import Any
 
 from backend.db import Db
+from backend.services.dietary_filters import recipe_diet_codes, recipe_satisfies_dietary_labels
 
 
 def estimate_recipe_meal_price(db: Db, recipe_id: str) -> float:
@@ -49,7 +50,17 @@ def load_env_file(path: str) -> None:
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip().strip('"').strip("'")
-            os.environ.setdefault(key, value)
+            # File wins over empty defaults so local openai.env is authoritative.
+            os.environ[key] = value
+
+
+def openai_key_from_env() -> str | None:
+    """OpenAI SDK and docs often use OPENAI_API_KEY; we also accept OPENAI_KEY."""
+    for name in ("OPENAI_KEY", "OPENAI_API_KEY"):
+        v = os.environ.get(name)
+        if v and str(v).strip():
+            return str(v).strip()
+    return None
 
 
 def recipes_catalog_csv(db: Db) -> str:
@@ -143,23 +154,33 @@ def match_dishes(
     user_query: str,
     *,
     model: str | None = None,
+    dietary_needs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return OpenAI JSON shape: ``{{"matches": [...]}}``."""
     catalog = recipes_catalog_csv(db)
     prompt = build_prompt(catalog, user_query.strip())
-    api_key = os.environ.get("OPENAI_KEY")
+    api_key = openai_key_from_env()
     if not api_key:
         raise RuntimeError(
-            "Missing OPENAI_KEY. Set it in openai.env as OPENAI_KEY=... or export it."
+            "Missing API key: set OPENAI_KEY or OPENAI_API_KEY in openai.env (repo root) or export either variable."
         )
     m = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     result = call_openai(api_key, m, prompt)
     matches = result.get("matches")
+    needs = [str(x).strip() for x in (dietary_needs or []) if str(x).strip()]
     if isinstance(matches, list):
+        filtered: list[dict[str, Any]] = []
         for item in matches:
             if not isinstance(item, dict):
                 continue
             rid = str(item.get("id", "")).strip()
-            if rid:
-                item["estimated_price"] = estimate_recipe_meal_price(db, rid)
+            if not rid:
+                continue
+            if needs:
+                codes = recipe_diet_codes(db, rid)
+                if not recipe_satisfies_dietary_labels(codes, needs):
+                    continue
+            item["estimated_price"] = estimate_recipe_meal_price(db, rid)
+            filtered.append(item)
+        result["matches"] = filtered
     return result

@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 import urllib.error
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, HTMLResponse
+from starlette.staticfiles import StaticFiles
 
 from backend.config import OPENAI_ENV_PATH
 from backend.services.match_dishes import load_env_file, match_dishes
@@ -110,6 +112,10 @@ class ShoppingFromMealsBody(BaseModel):
 class MatchDishesBody(BaseModel):
     query: str
     model: str | None = None
+    dietary_needs: list[str] | None = Field(
+        default=None,
+        description="Household profile labels (e.g. Vegan, Gluten-free).",
+    )
 
 
 def _hash_password(password: str) -> str:
@@ -303,7 +309,29 @@ def article_detail(sku: str) -> dict[str, Any]:
 
 @app.get("/api/catalog/recipes")
 def list_recipes() -> list[dict[str, Any]]:
-    return db.rows("SELECT * FROM recipes ORDER BY name")
+    recipes = db.rows("SELECT * FROM recipes ORDER BY name")
+    tag_rows = db.rows(
+        """
+        SELECT rt.recipe_id, pt.code, pt.tag_type
+        FROM recipe_tags rt
+        JOIN preference_tags pt ON pt.id = rt.tag_id
+        """
+    )
+    diet_by_rid: dict[str, list[str]] = defaultdict(list)
+    meal_by_rid: dict[str, list[str]] = defaultdict(list)
+    for r in tag_rows:
+        rid = str(r["recipe_id"]).strip()
+        code = str(r["code"]).strip()
+        ttype = str(r["tag_type"]).strip()
+        if ttype == "meal_time":
+            meal_by_rid[rid].append(code)
+        else:
+            diet_by_rid[rid].append(code)
+    for rec in recipes:
+        rid = str(rec["id"]).strip()
+        rec["diet_tags"] = sorted(set(diet_by_rid.get(rid, [])))
+        rec["meal_times"] = sorted(set(meal_by_rid.get(rid, [])))
+    return recipes
 
 
 @app.post("/api/catalog/match-dishes")
@@ -313,7 +341,12 @@ def post_match_dishes(body: MatchDishesBody) -> dict[str, Any]:
     if not q:
         raise HTTPException(status_code=400, detail="query must not be empty")
     try:
-        return match_dishes(db, q, model=body.model)
+        return match_dishes(
+            db,
+            q,
+            model=body.model,
+            dietary_needs=body.dietary_needs,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except urllib.error.HTTPError as e:
@@ -509,20 +542,53 @@ def list_customer_orders(customer_id: str) -> list[dict[str, Any]]:
     )
 
 
-def _frontend_file(name: str) -> Path:
-    return FRONTEND_DIR / name
+FRONTEND_DIST = FRONTEND_DIR / "dist"
 
 
-if FRONTEND_DIR.exists():
-    # Do not use StaticFiles.mount("/") — it catches POST /api/* and returns 405.
+def _spa_dist_ready() -> bool:
+    return FRONTEND_DIST.is_dir() and (FRONTEND_DIST / "index.html").is_file()
+
+
+# Serve the Vite production build (npm run build). Dev entry /src/main.tsx is not on this server.
+if _spa_dist_ready():
+    _assets_dir = FRONTEND_DIST / "assets"
+    if _assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(_assets_dir)),
+            name="vite_assets",
+        )
+
     @app.get("/")
-    def serve_index() -> FileResponse:
-        return FileResponse(_frontend_file("index.html"))
+    def serve_spa_index() -> FileResponse:
+        return FileResponse(FRONTEND_DIST / "index.html")
 
-    @app.get("/styles.css")
-    def serve_styles() -> FileResponse:
-        return FileResponse(_frontend_file("styles.css"))
-
-    @app.get("/app.js")
-    def serve_app_js() -> FileResponse:
-        return FileResponse(_frontend_file("app.js"))
+    @app.get("/{full_path:path}")
+    def serve_spa_fallback(full_path: str) -> FileResponse:
+        if full_path.startswith("api"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        dist_root = FRONTEND_DIST.resolve()
+        try:
+            candidate.relative_to(dist_root)
+        except ValueError:
+            return FileResponse(FRONTEND_DIST / "index.html")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
+elif FRONTEND_DIR.is_dir():
+    @app.get("/")
+    def serve_frontend_build_hint() -> HTMLResponse:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>Build frontend</title></head>"
+            "<body style=\"font-family:system-ui;max-width:40rem;margin:2rem auto;line-height:1.5\">"
+            "<h1>Frontend bundle missing</h1>"
+            "<p>This API serves the app from <code>frontend/dist</code> after a Vite build.</p>"
+            "<p><strong>Option A — Vite dev (hot reload):</strong></p>"
+            "<pre style=\"background:#f4f4f5;padding:1rem;border-radius:8px\">cd frontend && npm run dev</pre>"
+            "<p>Then open the URL Vite prints (usually port 5173) — it proxies API calls to this server.</p>"
+            "<p><strong>Option B — Production build on port 8000:</strong></p>"
+            "<pre style=\"background:#f4f4f5;padding:1rem;border-radius:8px\">cd frontend && npm run build</pre>"
+            "<p>Then reload this page.</p>"
+            "</body></html>"
+        )

@@ -18,7 +18,6 @@ import ChatBox from "@/components/ChatBox";
 import ItemsPage from "@/components/ItemsPage";
 import HistoryPage from "@/components/HistoryPage";
 import FavouritesPage from "@/components/FavouritesPage";
-import MealSwapPage from "@/components/MealSwapPage";
 import CheckoutPage from "@/components/CheckoutPage";
 import EasterPage from "@/components/EasterPage";
 import ProfilePage from "@/components/ProfilePage";
@@ -34,6 +33,17 @@ import {
 import { fetchRecipes, shoppingFromMeals, matchDishes } from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
 import { mergeMealAndExtraForDisplay, mergeLinesBySku } from "@/lib/mergeBasket";
+import { loadHouseholdProfile, HOUSEHOLD_PROFILE_SAVED_EVENT } from "@/lib/profileStorage";
+import { filterRecipesForPlanner } from "@/lib/recipeDietary";
+import { recipesForMealCategory } from "@/lib/recipeMealTimes";
+import {
+  applySpicyPoolRules,
+  loadSpicyLearning,
+  mealHasSpicyTag,
+  recordSpicyReject,
+  resetSpicyAvoid,
+  SPICY_LEARNING_EVENT,
+} from "@/lib/spicyLearning";
 import { toast } from "@/components/ui/sonner";
 
 const GROCERIES_LABEL = "Groceries";
@@ -63,7 +73,6 @@ const Index = () => {
   mealPlanBasketRef.current = mealPlanBasket;
 
   const [favourites, setFavourites] = useState<{ id: string; name: string; brand: string; price: number; image: string }[]>([]);
-  const [swapMealId, setSwapMealId] = useState<string | null>(null);
   const [checkoutPageOpen, setCheckoutPageOpen] = useState(false);
   const [easterPageOpen, setEasterPageOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -75,15 +84,29 @@ const Index = () => {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
 
-  const appliedApiPlan = useRef(false);
+  /** Bumps when household profile is saved so the API-backed week plan refilters by diet. */
+  const [plannerDietKey, setPlannerDietKey] = useState(0);
+  /** Bumps when spicy learning crosses threshold or user resets — replan ordering / filters. */
+  const [spicyLearningKey, setSpicyLearningKey] = useState(0);
 
   const mealPlan = mealPlans[activePlanIndex];
+
+  /** Slot id + recipe id only (ignores price) — refetch ingredient totals when assignments change, not on every price write. */
+  const slotPriceKey = useMemo(
+    () =>
+      mealPlan
+        .flatMap((d) => d.meals)
+        .filter((m) => m.recipeId)
+        .map((m) => `${m.id}\t${m.recipeId}`)
+        .join("|"),
+    [mealPlan]
+  );
 
   const slotExtrasBasket = useMemo(() => {
     const lines: BasketIngredient[] = [];
     for (const day of mealPlan) {
       const slot = day.meals.find((m) => m.category === "extras");
-      // Do not require `selected`: the trash toggle only dims the card; saved extras should still count.
+      // Do not require `selected`: extras count even when the card is dimmed; saved lines should still count.
       if (!slot?.extrasLines?.length) continue;
       const label = `${day.day} · Extras`;
       for (const row of slot.extrasLines) {
@@ -121,15 +144,68 @@ const Index = () => {
       : "";
 
   const { data: catalogRecipes } = useQuery({
-    queryKey: ["planner-recipes"],
+    // Bump when recipe tags / API shape change so clients don’t keep stale `diet_tags` (e.g. spicy).
+    queryKey: ["planner-recipes", "diet-tags-v12"],
     queryFn: fetchRecipes,
-    staleTime: 5 * 60_000,
+    staleTime: 60_000,
   });
 
+  const recipeDietTagsById = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    for (const r of catalogRecipes ?? []) {
+      if (r.diet_tags?.length) m[r.id] = r.diet_tags;
+    }
+    return m;
+  }, [catalogRecipes]);
+
+  /** Filter AI matches by profile flavor (spicy / not spicy) and learned spicy avoidance. */
+  const filteredAiMatches = useMemo(() => {
+    const profile = loadHouseholdProfile();
+    const codes = profile.selectedDiets;
+    const tags = recipeDietTagsById;
+    let list = aiMatches;
+    if (codes.includes("spicy")) {
+      list = list.filter((m) => tags[m.id]?.includes("spicy"));
+    } else if (codes.includes("not_spicy") || loadSpicyLearning().avoidSpicy) {
+      list = list.filter((m) => !tags[m.id]?.includes("spicy"));
+    }
+    return list;
+  }, [aiMatches, recipeDietTagsById, spicyLearningKey, plannerDietKey]);
+
+  const spicyLearnState = useMemo(() => loadSpicyLearning(), [spicyLearningKey]);
+  const spicyHiddenFromPlanner = spicyLearnState.avoidSpicy;
+
   useEffect(() => {
-    if (!catalogRecipes?.length || appliedApiPlan.current) return;
-    appliedApiPlan.current = true;
-    const plan = weekPlanFromRecipes(catalogRecipes);
+    const onProfileSaved = () => setPlannerDietKey((k) => k + 1);
+    window.addEventListener(HOUSEHOLD_PROFILE_SAVED_EVENT, onProfileSaved);
+    return () => window.removeEventListener(HOUSEHOLD_PROFILE_SAVED_EVENT, onProfileSaved);
+  }, []);
+
+  useEffect(() => {
+    const onSpicyLearning = () => setSpicyLearningKey((k) => k + 1);
+    window.addEventListener(SPICY_LEARNING_EVENT, onSpicyLearning);
+    return () => window.removeEventListener(SPICY_LEARNING_EVENT, onSpicyLearning);
+  }, []);
+
+  useEffect(() => {
+    if (!catalogRecipes?.length) return;
+    const profile = loadHouseholdProfile();
+    const avoidSpicyLearned = loadSpicyLearning().avoidSpicy;
+    const wantsSpicyOnly = profile.selectedDiets.includes("spicy");
+    const stripLearnedSpicy = avoidSpicyLearned && !wantsSpicyOnly;
+
+    let pool = filterRecipesForPlanner(catalogRecipes, profile.selectedDiets);
+    if (pool.length === 0) {
+      toast.info("No recipes match every selected dietary need — showing the full catalog.");
+      pool = catalogRecipes;
+    }
+
+    let poolSpicy = applySpicyPoolRules(pool, stripLearnedSpicy);
+    if (poolSpicy.length === 0 && stripLearnedSpicy) {
+      toast.info("No recipes match your diet without spicy dishes — showing a wider set.");
+      poolSpicy = pool;
+    }
+    const plan = weekPlanFromRecipes(poolSpicy);
     setMealPlans((prev) => {
       const previousWeek = prev[0];
       if (!previousWeek?.length) return [plan];
@@ -157,17 +233,24 @@ const Index = () => {
       });
       return [merged];
     });
+  }, [catalogRecipes, plannerDietKey, spicyLearningKey]);
 
-    const slots = plan
+  /** Ingredient totals per slot — runs when slot↔recipe assignments change (not when only `price` changes). */
+  useEffect(() => {
+    if (!slotPriceKey) return;
+    const slots = mealPlan
       .flatMap((d) => d.meals)
       .filter((m): m is Meal & { recipeId: string } => Boolean(m.recipeId));
+    if (!slots.length) return;
+
     let cancelled = false;
     shoppingFromMeals(slots.map((m) => ({ recipe_id: m.recipeId, label: m.id })))
       .then((res) => {
         if (cancelled) return;
         const totals = new Map<string, number>();
         for (const row of res.detail) {
-          const key = row.meal_label;
+          const key = String(row.meal_label ?? "").trim();
+          if (!key) continue;
           totals.set(key, (totals.get(key) ?? 0) + row.line_total);
         }
         setMealPlans((prev) =>
@@ -175,6 +258,7 @@ const Index = () => {
             week.map((day) => ({
               ...day,
               meals: day.meals.map((m) => {
+                if (!m.recipeId) return m;
                 const t = totals.get(m.id);
                 if (t === undefined) return m;
                 return { ...m, price: Math.round(t * 100) / 100 };
@@ -188,7 +272,9 @@ const Index = () => {
     return () => {
       cancelled = true;
     };
-  }, [catalogRecipes]);
+    // mealPlan intentionally omitted: only refetch when slot↔recipe identity changes (slotPriceKey).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotPriceKey]);
 
   const { data: apiRecipePreview, isLoading: apiRecipeLoading } = useQuery({
     queryKey: ["recipe-preview", selectedMealData?.recipeId],
@@ -196,7 +282,7 @@ const Index = () => {
       shoppingFromMeals([
         {
           recipe_id: selectedMealData!.recipeId!,
-          label: selectedMealData!.name,
+          label: selectedRecipe ?? selectedMealData!.id,
         },
       ]),
     enabled: Boolean(selectedMealData?.recipeId && selectedRecipe),
@@ -244,10 +330,11 @@ const Index = () => {
     }
 
     let cancelled = false;
+    const slotNameById = new Map(recipeMeals.map((m) => [m.id, m.name] as const));
     shoppingFromMeals(
       recipeMeals.map((m) => ({
         recipe_id: m.recipeId as string,
-        label: m.name,
+        label: m.id,
       }))
     )
       .then((res) => {
@@ -269,6 +356,7 @@ const Index = () => {
         for (const line of res.checkout_lines) {
           const meta = metaBySku.get(line.sku);
           if (!meta) continue;
+          const fromSlot = String(meta.meal_label ?? "").trim();
           merged.push({
             id: line.sku,
             name: line.name,
@@ -277,7 +365,7 @@ const Index = () => {
             weight: `${line.quantity}×`,
             image: "🛒",
             quantity: line.quantity,
-            fromMeal: meta.meal_label,
+            fromMeal: slotNameById.get(fromSlot) ?? fromSlot,
           });
         }
         setMealPlanBasket(merged);
@@ -323,23 +411,15 @@ const Index = () => {
     });
   };
 
-  const toggleMealSelection = (id: string) =>
-    setMealPlans((prev) =>
-      prev.map((plan, pi) =>
-        pi === activePlanIndex
-          ? plan.map((day) => ({
-              ...day,
-              meals: day.meals.map((m) => (m.id === id ? { ...m, selected: !m.selected } : m)),
-            }))
-          : plan
-      )
-    );
-
   const handleClickMeal = (id: string) => {
     const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === id);
     if (!meal) return;
     if (meal.category === "extras") {
       setExtrasDialogMealId(id);
+      return;
+    }
+    if (!meal.recipeId && meal.name === "Add a recipe") {
+      toast.info("Drag a recipe from suggestions onto this slot, or use Swap.");
       return;
     }
     setSelectedMealData(meal);
@@ -370,6 +450,49 @@ const Index = () => {
       )
     );
   }, [activePlanIndex]);
+
+  const removeMealFromSlot = useCallback(
+    (id: string) => {
+      const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === id);
+      if (!meal) return;
+      if (meal.category === "extras") {
+        handleApplyDayExtras(id, []);
+        return;
+      }
+      if (!meal.recipeId && meal.name === "Add a recipe") return;
+      if (mealHasSpicyTag(meal.dietTags)) {
+        const crossed = recordSpicyReject();
+        if (crossed) {
+          toast.info("We’ll stop suggesting spicy dishes. You can turn this back on in Profile.");
+        }
+      }
+      setMealPlans((prev) =>
+        prev.map((plan, pi) =>
+          pi === activePlanIndex
+            ? plan.map((day) => ({
+                ...day,
+                meals: day.meals.map((m) =>
+                  m.id === id
+                    ? {
+                        ...m,
+                        name: "Add a recipe",
+                        brand: "",
+                        price: 0,
+                        weight: "Drag or swap",
+                        image: "➕",
+                        recipeId: undefined,
+                        dietTags: undefined,
+                        selected: false,
+                      }
+                    : m
+                ),
+              }))
+            : plan
+        )
+      );
+    },
+    [activePlanIndex, mealPlan, handleApplyDayExtras]
+  );
 
   const filteredPlan = useMemo(
     () =>
@@ -500,7 +623,7 @@ const Index = () => {
     setAiCatalogEmpty(false);
     setAiMatches([]);
     try {
-      const res = await matchDishes(q);
+      const res = await matchDishes(q, undefined, loadHouseholdProfile().selectedDiets);
       const matches = res.matches ?? [];
       setAiMatches(matches);
       setAiCatalogEmpty(matches.length === 0);
@@ -510,7 +633,7 @@ const Index = () => {
       setAiCatalogEmpty(false);
       setAiError(
         err.includes("503") || err.toLowerCase().includes("openai")
-          ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or check API logs."
+          ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or OPENAI_API_KEY, or check API logs."
           : `Could not reach match-dishes: ${err.slice(0, 200)}`
       );
     } finally {
@@ -518,25 +641,16 @@ const Index = () => {
     }
   }, []);
 
-  const handleSwapMeal = useCallback(
-    (oldId: string, newMeal: Meal) => {
-      setMealPlans((prev) =>
-        prev.map((plan, pi) =>
-          pi === activePlanIndex
-            ? plan.map((day) => ({
-                ...day,
-                meals: day.meals.map((m) => (m.id === oldId ? { ...newMeal, selected: true } : m)),
-              }))
-            : plan
-        )
-      );
-      setSwapMealId(null);
-    },
-    [activePlanIndex]
-  );
-
   const handleDropAiRecipeOnSlot = useCallback(
     (mealId: string, recipe: { id: string; name: string; price: number }) => {
+      const oldMeal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === mealId);
+      const newTags = recipeDietTagsById[recipe.id];
+      if (mealHasSpicyTag(oldMeal?.dietTags) && !mealHasSpicyTag(newTags)) {
+        const crossed = recordSpicyReject();
+        if (crossed) {
+          toast.info("We’ll stop suggesting spicy dishes. You can turn this back on in Profile.");
+        }
+      }
       const mealPrice = Number.isFinite(recipe.price) ? Math.round(recipe.price * 100) / 100 : 0;
       setMealPlans((prev) =>
         prev.map((plan, pi) =>
@@ -554,6 +668,7 @@ const Index = () => {
                     weight: "1 serving",
                     image: "🍽️",
                     selected: true,
+                    dietTags: recipeDietTagsById[recipe.id] ? [...recipeDietTagsById[recipe.id]] : undefined,
                   };
                 }),
               }))
@@ -562,32 +677,37 @@ const Index = () => {
       );
       toast.success(`Replaced with “${recipe.name}”`);
     },
-    [activePlanIndex]
+    [activePlanIndex, recipeDietTagsById, mealPlan]
   );
 
-  const getSwapAlternatives = (mealId: string): Meal[] => {
-    const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === mealId);
-    if (!meal || meal.category === "extras") return [];
-    const pool = mealPlan
-      .flatMap((d) => d.meals)
-      .filter((m) => m.category === meal.category && m.id !== meal.id && m.category !== "extras");
-    const unique = pool.filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
-    return unique.slice(0, 3);
-  };
-
-  if (swapMealId) {
-    const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === swapMealId);
-    if (meal) {
-      return (
-        <MealSwapPage
-          meal={meal}
-          alternatives={getSwapAlternatives(swapMealId)}
-          onBack={() => setSwapMealId(null)}
-          onSwap={handleSwapMeal}
-        />
-      );
-    }
-  }
+  const autoSwapMeal = useCallback(
+    (mealId: string) => {
+      const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === mealId);
+      if (!meal || meal.category === "extras") return;
+      if (!catalogRecipes?.length) {
+        toast.error("Catalog not loaded yet.");
+        return;
+      }
+      const profile = loadHouseholdProfile();
+      let pool = filterRecipesForPlanner(catalogRecipes, profile.selectedDiets);
+      if (pool.length === 0) pool = [...catalogRecipes];
+      const avoidSpicyLearned = loadSpicyLearning().avoidSpicy;
+      const wantsSpicyOnly = profile.selectedDiets.includes("spicy");
+      const stripLearnedSpicy = avoidSpicyLearned && !wantsSpicyOnly;
+      pool = applySpicyPoolRules(pool, stripLearnedSpicy);
+      if (pool.length === 0) pool = [...catalogRecipes];
+      pool = recipesForMealCategory(pool, meal.category);
+      const currentId = meal.recipeId;
+      pool = pool.filter((r) => r.id !== currentId);
+      if (pool.length === 0) {
+        toast.info("No other recipe fits your preferences right now.");
+        return;
+      }
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      handleDropAiRecipeOnSlot(mealId, { id: pick.id, name: pick.name, price: 0 });
+    },
+    [catalogRecipes, mealPlan, handleDropAiRecipeOnSlot]
+  );
 
   if (profileOpen) {
     return <ProfilePage onBack={() => setProfileOpen(false)} />;
@@ -638,10 +758,10 @@ const Index = () => {
             title={selectedMealData.name}
             subtitle="From your Picnic catalog"
             heroEmoji={selectedMealData.image}
-            calories={selectedMealData.calories || 400}
             prepTime="—"
             preparation={["Ingredients from recipe → article mapping in your SQLite database."]}
             ingredients={ingredients}
+            dietTags={selectedMealData.dietTags}
             onBack={() => {
               setSelectedRecipe(null);
               setSelectedMealData(null);
@@ -661,10 +781,10 @@ const Index = () => {
         title={recipe.title}
         subtitle={recipe.subtitle}
         heroEmoji={recipe.heroEmoji}
-        calories={recipe.calories}
         prepTime={recipe.prepTime}
         preparation={recipe.preparation}
         ingredients={recipe.ingredients}
+        dietTags={selectedMealData.dietTags}
         onBack={() => {
           setSelectedRecipe(null);
           setSelectedMealData(null);
@@ -687,11 +807,29 @@ const Index = () => {
           <Toolbar onToggleAI={() => setAiOpen((p) => !p)} aiOpen={aiOpen} />
           <AIPanel isOpen={aiOpen} loading={aiLoading} onSubmitPrompt={handleAiPrompt} />
           <WeeklySummary mealPlan={mealPlan} />
+          {spicyHiddenFromPlanner && (
+            <div className="max-w-6xl mx-auto w-full px-4 mb-3 rounded-xl border border-amber-200/60 bg-amber-50/80 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 text-xs text-foreground leading-snug">
+              <span className="font-medium">Spicy meals are hidden from this week</span> after several swaps or
+              deselects. The planner won’t show the 🔥 tag until you allow spicy again, or browse the full list below.
+              <button
+                type="button"
+                className="ml-1.5 font-semibold text-primary hover:underline"
+                onClick={() => {
+                  resetSpicyAvoid();
+                  toast.success("Spicy recipes are back in your plan.");
+                }}
+              >
+                Show spicy in planner
+              </button>
+            </div>
+          )}
           <AiSuggestionsSection
-            aiMatches={aiMatches}
+            aiMatches={filteredAiMatches}
+            sourceMatchCount={aiMatches.length}
             aiLoading={aiLoading}
             aiError={aiError}
             aiCatalogEmpty={aiCatalogEmpty}
+            dietTagsByRecipeId={recipeDietTagsById}
           />
           <div className="px-4 pt-2 max-w-6xl mx-auto w-full">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Per-weekday</p>
@@ -713,12 +851,12 @@ const Index = () => {
             <PlannerGrid
               filteredPlan={filteredPlan}
               activeMealFilters={activeMealFilters}
-              onToggleSelect={toggleMealSelection}
+              onRemoveMeal={removeMealFromSlot}
               onClickMeal={handleClickMeal}
               onRemoveColumn={toggleMealFilter}
               onToggleFavourite={toggleFavourite}
               favouriteIds={favourites.map((f) => f.id)}
-              onSwapMeal={(id) => setSwapMealId(id)}
+              onSwapMeal={autoSwapMeal}
               onDropAiRecipe={handleDropAiRecipeOnSlot}
             />
           </div>

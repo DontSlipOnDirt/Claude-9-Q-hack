@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import DietStickers, { hasVisibleDietStickers } from "@/components/DietStickers";
 
 interface ItemsPageProps {
   onAddToBasket: (product: Product) => void;
@@ -219,7 +220,7 @@ const ItemsPage = ({ onAddToBasket, onRemoveOneFromBasket, basketQuantityById }:
   });
 
   const { data: apiRecipes = [], isLoading: recipesLoading, isError: recipesError } = useQuery({
-    queryKey: ["catalog-recipes"],
+    queryKey: ["catalog-recipes", "diet-tags-v12"],
     queryFn: fetchRecipes,
     staleTime: 60_000,
   });
@@ -287,6 +288,12 @@ const ItemsPage = ({ onAddToBasket, onRemoveOneFromBasket, basketQuantityById }:
         <p className="text-sm text-destructive mb-4">
           Could not load catalog — start the API (<code className="text-xs">python main.py</code>) or use{" "}
           <code className="text-xs">npm run dev</code> with Vite proxy.
+        </p>
+      )}
+      {activeFilter !== "recipes" && !recipesError && (
+        <p className="text-xs text-muted-foreground mb-3">
+          Diet tags (Spicy 🔥, vegan, …) appear on <strong className="text-foreground">recipe</strong> cards — open the{" "}
+          <strong className="text-foreground">All Recipes</strong> tab above.
         </p>
       )}
       <div className="relative mb-4">
@@ -422,6 +429,9 @@ const ItemsPage = ({ onAddToBasket, onRemoveOneFromBasket, basketQuantityById }:
                       <div className="h-20 flex items-center justify-center text-4xl mb-2">🍽️</div>
                     </div>
                     <p className="text-sm font-semibold text-foreground truncate">{r.name}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5 min-h-[1.25rem]">
+                      <DietStickers dietTags={r.diet_tags} />
+                    </div>
                     <p className="text-xs text-muted-foreground">Recipe</p>
                     <div className="mt-auto pt-2">
                       <span className="text-sm font-bold text-foreground">
@@ -447,7 +457,12 @@ const ItemsPage = ({ onAddToBasket, onRemoveOneFromBasket, basketQuantityById }:
             <DialogContent className="flex w-[calc(100%-2rem)] max-w-sm flex-col gap-0 overflow-hidden p-0 sm:max-w-md sm:rounded-xl max-h-[85vh]">
               <DialogHeader className="shrink-0 border-b border-border p-5 pb-3 pr-12 text-left">
                 <DialogTitle className="text-base leading-snug pr-2">{selectedRecipe?.name ?? "Recipe"}</DialogTitle>
-                <DialogDescription className="text-xs">
+                {selectedRecipe && hasVisibleDietStickers(selectedRecipe.diet_tags) && (
+                  <div className="mt-2">
+                    <DietStickers dietTags={selectedRecipe.diet_tags} size="md" />
+                  </div>
+                )}
+                <DialogDescription className="text-xs mt-2">
                   Default articles for this recipe from your catalog (same as meal planner).
                 </DialogDescription>
               </DialogHeader>

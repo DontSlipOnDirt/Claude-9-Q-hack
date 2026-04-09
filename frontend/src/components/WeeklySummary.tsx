@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Utensils, Flame, Euro, Sparkles } from "lucide-react";
+import { Utensils, Euro, Sparkles } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { DayPlan } from "@/data/meals";
 
@@ -18,7 +18,6 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
     if (count === 0) return null;
 
     const avgPrice = selected.reduce((s, m) => s + m.price, 0) / count;
-    const avgCal = selected.filter((m) => m.calories).reduce((s, m) => s + (m.calories || 0), 0) / (selected.filter((m) => m.calories).length || 1);
 
     const names = selected.map((m) => m.name.toLowerCase());
     const cuisineKeywords = ["Greek", "Asian", "Italian", "Mediterranean", "Thai", "Mexican", "Indian", "German", "French"];
@@ -49,7 +48,7 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
       { name: "Sugar", value: sugar || 1 },
     ];
 
-    return { count, avgPrice, avgCal: Math.round(avgCal), cuisineText, chartData };
+    return { count, avgPrice, cuisineText, chartData };
   }, [mealPlan]);
 
   if (!stats) return null;
@@ -69,16 +68,11 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
 
         <div className="flex gap-4 items-center">
           {/* Stats cards */}
-          <div className="flex-1 grid grid-cols-3 gap-3">
+          <div className="flex-1 grid grid-cols-2 gap-3">
             <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
               <Utensils className="w-4 h-4 text-primary mx-auto mb-1" />
               <p className="text-lg font-bold text-foreground">{stats.count}</p>
               <p className="text-[11px] text-muted-foreground">Meals planned</p>
-            </div>
-            <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
-              <Flame className="w-4 h-4 text-destructive mx-auto mb-1" />
-              <p className="text-lg font-bold text-foreground">{stats.avgCal}</p>
-              <p className="text-[11px] text-muted-foreground">Avg. kcal/meal</p>
             </div>
             <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
               <Euro className="w-4 h-4 text-accent mx-auto mb-1" />

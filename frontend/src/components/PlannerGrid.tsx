@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
-import { Trash2, Heart, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { X, Heart, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { DayPlan } from "@/data/meals";
+import DietStickers, { hasVisibleDietStickers } from "@/components/DietStickers";
 import { parseAiRecipeDrag } from "@/lib/dragAiRecipe";
 import { cn } from "@/lib/utils";
 
 interface PlannerGridProps {
   filteredPlan: DayPlan[];
   activeMealFilters: string[];
-  onToggleSelect: (id: string) => void;
+  /** Remove recipe from slot (or clear extras). */
+  onRemoveMeal: (id: string) => void;
   onClickMeal: (id: string) => void;
   onRemoveColumn: (category: string) => void;
   onToggleFavourite?: (id: string) => void;
@@ -36,7 +38,7 @@ const CARDS_PER_PAGE = 3;
 const PlannerGrid = ({
   filteredPlan,
   activeMealFilters,
-  onToggleSelect,
+  onRemoveMeal,
   onClickMeal,
   onRemoveColumn,
   onToggleFavourite,
@@ -91,6 +93,9 @@ const PlannerGrid = ({
                     const extraLines = meal.extrasLines ?? [];
                     const extraUnits = extraLines.reduce((s, x) => s + x.quantity, 0);
                     const extraTotal = extraLines.reduce((s, x) => s + x.price * x.quantity, 0);
+                    /** Cleared by user (X); seed/API meals without recipeId still show until cleared. */
+                    const isEmptySlot = !isExtras && !meal.recipeId && meal.name === "Add a recipe";
+                    const showRemove = isExtras ? extraUnits > 0 : !isEmptySlot;
                     return (
                       <div key={cat}>
                         <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -99,9 +104,11 @@ const PlannerGrid = ({
                         <div
                           className={cn(
                             "relative rounded-xl p-3 transition-all cursor-pointer group",
-                            meal.selected
-                              ? "bg-card border border-border/60 shadow-sm hover:shadow-md"
-                              : "bg-muted/40 border border-dashed border-muted-foreground/20 opacity-50",
+                            !isExtras && isEmptySlot
+                              ? "bg-muted/40 border border-dashed border-muted-foreground/25 opacity-90"
+                              : meal.selected
+                                ? "bg-card border border-border/60 shadow-sm hover:shadow-md"
+                                : "bg-muted/40 border border-dashed border-muted-foreground/20 opacity-50",
                             !isExtras &&
                               onDropAiRecipe &&
                               dragOverMealId === meal.id &&
@@ -130,7 +137,7 @@ const PlannerGrid = ({
                         >
                           {/* Action buttons */}
                           <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {onToggleFavourite && !isExtras && (
+                            {onToggleFavourite && !isExtras && !isEmptySlot && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -154,24 +161,23 @@ const PlannerGrid = ({
                                   onSwapMeal(meal.id);
                                 }}
                                 className="bg-card/90 backdrop-blur-sm rounded-full p-1.5 shadow hover:scale-110 transition-transform"
-                                title="Swap meal"
+                                title="Swap for another recipe"
                               >
-                                <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                                <RefreshCw className="w-3.5 h-3.5 text-primary" />
                               </button>
                             )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleSelect(meal.id);
-                              }}
-                              className="bg-card/90 backdrop-blur-sm rounded-full p-1.5 shadow hover:scale-110 transition-transform"
-                            >
-                              <Trash2
-                                className={`w-3.5 h-3.5 ${
-                                  meal.selected ? "text-muted-foreground" : "text-primary"
-                                }`}
-                              />
-                            </button>
+                            {showRemove && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRemoveMeal(meal.id);
+                                }}
+                                className="bg-card/90 backdrop-blur-sm rounded-full p-1.5 shadow hover:scale-110 transition-transform"
+                                title={isExtras ? "Clear groceries" : "Remove recipe"}
+                              >
+                                <X className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+                              </button>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-3">
@@ -184,7 +190,9 @@ const PlannerGrid = ({
                                   ? extraUnits > 0
                                     ? `Groceries (${extraUnits})`
                                     : "Add groceries"
-                                  : meal.name}
+                                  : isEmptySlot
+                                    ? "Add a recipe"
+                                    : meal.name}
                               </p>
                               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                 <span className="text-sm font-bold text-foreground">
@@ -197,12 +205,12 @@ const PlannerGrid = ({
                                 {isExtras && extraUnits > 0 && (
                                   <span className="text-[10px] text-muted-foreground">Groceries</span>
                                 )}
-                                {!isExtras && meal.calories && (
-                                  <span className="text-[10px] text-muted-foreground">
-                                    🔥 {meal.calories} kcal
-                                  </span>
-                                )}
                               </div>
+                              {!isExtras && hasVisibleDietStickers(meal.dietTags) && (
+                                <div className="mt-1.5 pl-0">
+                                  <DietStickers dietTags={meal.dietTags} />
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
