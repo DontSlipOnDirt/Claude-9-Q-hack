@@ -92,7 +92,9 @@ const AiSuggestionsSection = ({
           )}
 
           {!aiLoading && !aiError && aiCatalogEmpty && (
-            <p className="text-sm text-muted-foreground italic">No strong matches in the catalog — try different wording.</p>
+            <p className="text-sm text-muted-foreground italic">
+              Nothing to show yet — try a shorter phrase (e.g. “pasta”, “chicken”, “vegetarian”).
+            </p>
           )}
 
           {!aiLoading && !aiError && !aiCatalogEmpty && aiMatches.length === 0 && (
