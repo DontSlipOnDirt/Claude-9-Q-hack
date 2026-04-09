@@ -104,6 +104,8 @@ export type ShoppingDetailRow = {
   article_name: string;
   /** From mapped catalog article; may be `/catalog/*.png` or remote URL. */
   image_url?: string | null;
+  /** From catalog `articles.nutrition_table` (free text, e.g. "Calories: 18, ..."). */
+  nutrition_table?: string | null;
   quantity: number;
   unit_price: number;
   line_total: number;

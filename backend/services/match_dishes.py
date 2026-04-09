@@ -277,10 +277,16 @@ def match_dishes(
     user_query: str,
     *,
     model: str | None = None,
+    dietary_needs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return OpenAI JSON shape: ``{{"matches": [...]}}``."""
     catalog = recipes_catalog_csv(db)
-    prompt = build_prompt(catalog, user_query.strip())
+    q = user_query.strip()
+    # Keep API compatible with older callers that send dietary needs. We currently
+    # apply diet constraints in the planner; for search we only provide them as context.
+    if dietary_needs:
+        q = f"{q}\n\nDietary needs (must respect): {', '.join(sorted(set(dietary_needs)))}"
+    prompt = build_prompt(catalog, q)
     api_key = os.environ.get("OPENAI_KEY")
     if not api_key:
         raise RuntimeError(

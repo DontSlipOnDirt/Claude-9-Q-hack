@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Minus, Plus, User, Check, Trash2, ShoppingBag } from "lucide-react";
 import { loadHouseholdProfile, saveHouseholdProfile, type SavedHouseholdProfile } from "@/lib/profileStorage";
@@ -12,6 +12,7 @@ import {
   type PreferenceTag,
 } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
+import { imageFileToAvatarDataUrl } from "@/lib/avatarImage";
 import {
   Dialog,
   DialogContent,

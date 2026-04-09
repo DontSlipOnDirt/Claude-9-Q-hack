@@ -15,6 +15,9 @@ export interface AiSuggestionsSectionProps {
   aiCatalogEmpty: boolean;
   /** recipe id → diet tag codes from catalog */
   dietTagsByRecipeId?: Record<string, string[]>;
+  /** Optional click-to-select (mobile friendly). */
+  armedRecipeId?: string | null;
+  onPickRecipe?: (recipe: { id: string; name: string; price: number }) => void;
 }
 
 const AiSuggestionsSection = ({
@@ -24,24 +27,14 @@ const AiSuggestionsSection = ({
   aiError,
   aiCatalogEmpty,
   dietTagsByRecipeId,
+  armedRecipeId,
+  onPickRecipe,
 }: AiSuggestionsSectionProps) => {
   const hiddenByPreference =
     typeof sourceMatchCount === "number" && sourceMatchCount > 0 && aiMatches.length === 0;
   return (
     <div className="max-w-app mx-auto w-full px-4 mb-4">
       <div className="rounded-2xl border border-border bg-card/80 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-border bg-muted/30">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-accent shrink-0" />
-            <div>
-              <h3 className="font-bold text-foreground text-lg leading-tight">AI suggestions</h3>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Recipe ideas from your catalog — drag onto the breakfast, lunch, or dinner slot you want to fill. The week
-                grid picks morning-friendly recipes for breakfast and heavier mains for lunch and dinner.
-              </p>
-            </div>
-          </div>
-        </div>
         <div className="px-4 py-4">
           {aiError && (
             <Alert variant="destructive" className="py-3">
@@ -78,7 +71,13 @@ const AiSuggestionsSection = ({
                     );
                     e.dataTransfer.effectAllowed = "copy";
                   }}
-                  className="overflow-hidden border-primary/15 bg-primary/5 cursor-grab active:cursor-grabbing select-none hover:border-primary/35 transition-colors"
+                  onClick={() => {
+                    const price = typeof m.estimated_price === "number" ? m.estimated_price : 0;
+                    onPickRecipe?.({ id: m.id, name: m.name, price });
+                  }}
+                  className={`overflow-hidden border-primary/15 bg-primary/5 cursor-grab active:cursor-grabbing select-none hover:border-primary/35 transition-colors ${
+                    armedRecipeId === m.id ? "ring-2 ring-primary/60" : ""
+                  }`}
                 >
                   <CardContent className="p-3">
                     <div className="flex items-start gap-2">
@@ -120,9 +119,7 @@ const AiSuggestionsSection = ({
             </p>
           )}
 
-          {!aiLoading && !aiError && !aiCatalogEmpty && aiMatches.length === 0 && !hiddenByPreference && (
-            <p className="text-sm text-muted-foreground">Use the AI Meal Assistant above — suggestions appear here.</p>
-          )}
+          {!aiLoading && !aiError && !aiCatalogEmpty && aiMatches.length === 0 && !hiddenByPreference && null}
         </div>
       </div>
     </div>

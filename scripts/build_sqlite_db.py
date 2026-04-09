@@ -258,6 +258,11 @@ def normalize_row(row: dict[str, str]) -> dict[str, object]:
 
 def load_csv(conn: sqlite3.Connection, table: str, filename: str) -> None:
     csv_path = DATA_DIR / filename
+    if not csv_path.exists():
+        # Some CSVs are optional in certain hackathon setups (e.g. recurring items).
+        # Skipping keeps local demo builds working with partial data.
+        print(f"[build_sqlite_db] Skipping missing CSV: {csv_path}")
+        return
     with csv_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     if not rows:

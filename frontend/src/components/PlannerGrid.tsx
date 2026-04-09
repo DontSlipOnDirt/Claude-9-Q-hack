@@ -229,7 +229,7 @@ const PlannerGrid = ({
                                 )}
                                 {!isExtras && meal.calories && (
                                   <span className="text-xs text-muted-foreground">
-                                    🔥 {meal.calories} kcal
+                                    ⚡ {meal.calories} kcal
                                   </span>
                                 )}
                               </div>

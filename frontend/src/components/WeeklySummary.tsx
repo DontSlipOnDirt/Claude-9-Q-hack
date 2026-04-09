@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Utensils, Euro, Flame, Sparkles } from "lucide-react";
+import { Utensils, Euro, Zap, Sparkles } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { DayPlan } from "@/data/meals";
 
@@ -77,7 +77,7 @@ const WeeklySummary = ({ mealPlan }: WeeklySummaryProps) => {
               <p className="text-xs text-muted-foreground">Meals planned</p>
             </div>
             <div className="bg-card/80 backdrop-blur-sm rounded-xl p-3 text-center">
-              <Flame className="w-4 h-4 text-destructive mx-auto mb-1" />
+              <Zap className="w-4 h-4 text-accent mx-auto mb-1" />
               <p className="text-2xl font-bold text-foreground">{stats.avgCal > 0 ? stats.avgCal : "—"}</p>
               <p className="text-xs text-muted-foreground">Avg. kcal/meal</p>
             </div>

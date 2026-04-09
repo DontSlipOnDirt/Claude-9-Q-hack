@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import WeeklySummary from "@/components/WeeklySummary";
 import TopBar from "@/components/TopBar";
-import Toolbar from "@/components/Toolbar";
 import AIPanel from "@/components/AIPanel";
 import WeekGroceriesSection from "@/components/WeekGroceriesSection";
 import AiSuggestionsSection from "@/components/AiSuggestionsSection";
@@ -100,7 +99,6 @@ const Index = () => {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [slotPickerOpen, setSlotPickerOpen] = useState(false);
   const [deliverySlot, setDeliverySlot] = useState("Mon 14.04 18:00-19:00");
-  const [aiOpen, setAiOpen] = useState(false);
   const [mealPlanBasket, setMealPlanBasket] = useState<BasketIngredient[]>([]);
   const [extraGroceries, setExtraGroceries] = useState<BasketIngredient[]>([]);
   const mealPlanBasketRef = useRef<BasketIngredient[]>([]);
@@ -118,6 +116,9 @@ const Index = () => {
   const [aiMatches, setAiMatches] = useState<
     { id: string; name: string; reason?: string; estimated_price?: number }[]
   >([]);
+  const [armedAiRecipe, setArmedAiRecipe] = useState<{ id: string; name: string; price: number } | null>(
+    null
+  );
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
@@ -333,13 +334,24 @@ const Index = () => {
       .then((res) => {
         if (cancelled) return;
         const totals = new Map<string, number>();
-        const imageBySlot = new Map<string, string>();
+        const calories = new Map<string, number>();
+
+        const kcalFromNutrition = (t: unknown): number | null => {
+          if (typeof t !== "string") return null;
+          // Examples: "Calories: 18, ... (per 100g)" or "(per 100ml)"
+          const m = t.match(/Calories:\s*([0-9]+(?:\.[0-9]+)?)/i);
+          if (!m) return null;
+          const n = Number(m[1]);
+          return Number.isFinite(n) && n > 0 ? n : null;
+        };
         for (const row of res.detail) {
           const key = String(row.meal_label ?? "").trim();
           if (!key) continue;
           totals.set(key, (totals.get(key) ?? 0) + row.line_total);
-          if (!imageBySlot.has(key)) {
-            imageBySlot.set(key, imageUrlFromShoppingDetailRow(row));
+          const kcalPer100 = kcalFromNutrition(row.nutrition_table);
+          if (kcalPer100 !== null) {
+            // ingredient quantity is in "units" for this demo dataset; treat as ~100g/100ml portions.
+            calories.set(key, (calories.get(key) ?? 0) + kcalPer100 * row.quantity);
           }
         }
         setMealPlans((prev) =>
@@ -349,13 +361,13 @@ const Index = () => {
               meals: day.meals.map((m) => {
                 if (!m.recipeId) return m;
                 const t = totals.get(m.id);
-                const img = imageBySlot.get(m.id);
-                if (t === undefined && img === undefined) return m;
-                return {
-                  ...m,
-                  ...(t !== undefined ? { price: Math.round(t * 100) / 100 } : {}),
-                  ...(img !== undefined && m.category !== "extras" ? { image: img } : {}),
-                };
+                const kcal = calories.get(m.id);
+                if (t === undefined && kcal === undefined) return m;
+                // Keep meal cards emoji-only (no product thumbnails).
+                const next: Meal = { ...m };
+                if (t !== undefined) next.price = Math.round(t * 100) / 100;
+                if (kcal !== undefined) next.calories = Math.round(kcal);
+                return next;
               }),
             }))
           )
@@ -507,6 +519,11 @@ const Index = () => {
     if (!meal) return;
     if (meal.category === "extras") {
       setExtrasDialogMealId(id);
+      return;
+    }
+    if (armedAiRecipe) {
+      handleDropAiRecipeOnSlot(id, armedAiRecipe, "explicit_pick");
+      setArmedAiRecipe(null);
       return;
     }
     if (!meal.recipeId && meal.name === "Add a recipe") {
@@ -1076,9 +1093,8 @@ const Index = () => {
 
       {activeNav === "planner" && (
         <>
-          <Toolbar onToggleAI={() => setAiOpen((p) => !p)} aiOpen={aiOpen} />
-          <AIPanel isOpen={aiOpen} loading={aiLoading} onSubmitPrompt={handleAiPrompt} />
           <WeeklySummary mealPlan={mealPlan} />
+          <AIPanel isOpen loading={aiLoading} onSubmitPrompt={handleAiPrompt} />
           {spicyHiddenFromPlanner && (
             <div className="max-w-6xl mx-auto w-full px-4 mb-3 rounded-xl border border-amber-200/60 bg-amber-50/80 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 text-xs text-foreground leading-snug">
               <span className="font-medium">Spicy meals are hidden from this week</span> after several swaps or
@@ -1102,6 +1118,11 @@ const Index = () => {
             aiError={aiError}
             aiCatalogEmpty={aiCatalogEmpty}
             dietTagsByRecipeId={recipeDietTagsById}
+            armedRecipeId={armedAiRecipe?.id ?? null}
+            onPickRecipe={(r) => {
+              setArmedAiRecipe(r);
+              toast.info("Now tap a breakfast/lunch/dinner slot to place it.");
+            }}
           />
           <div className="px-4 pt-2 max-w-app mx-auto w-full">
             <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Per-weekday</p>
