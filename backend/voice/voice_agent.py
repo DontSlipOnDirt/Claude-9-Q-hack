@@ -1,406 +1,175 @@
-from __future__ import annotations
-
+import csv
 import json
 import os
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
 
-import requests
+from anthropic import Anthropic
 from dotenv import load_dotenv
-
-from backend.db import Db
-
+from flask import Flask, jsonify, request
 
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+# ---------- Agent Config ----------
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = "claude-haiku-4-5"
+ANTHROPIC_MAX_TOKENS = 250
+ANTHROPIC_TEMPERATURE = 0.4
+
+DEFAULT_MAX_RECIPES = 20
+MAX_STEPS_PER_RECIPE = 6
+
+SERVER_HOST = "0.0.0.0"
+SERVER_PORT = 5003
+SERVER_DEBUG = True
+
+SYSTEM_INSTRUCTIONS = (
+    "You are a meal recommendation assistant. "
+    "Use ONLY the recipes and ingredients provided in the JSON catalog. "
+    "Respond in very brief natural language that can be read aloud easily. "
+    "Use no markdown, no bullets, no headings, no numbering, and no code formatting. "
+    "Recommend 1 to 3 meals at most. "
+    "For each meal, keep the explanation short and plain. "
+    "If no strong match exists, suggest the closest options and explain tradeoffs briefly."
+)
 
 
-TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "get_customer_context",
-        "description": "Fetch customer profile, preferences, and recent order behavior.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_id": {"type": "string"},
-            },
-            "required": ["customer_id"],
-        },
-    },
-    {
-        "name": "search_articles",
-        "description": "Search grocery catalog articles by name/category and return price + availability.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "search_recipes",
-        "description": "Search recipes by name or description.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "frequent_items",
-        "description": "Return the most frequently purchased SKUs for the customer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_id": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-            },
-            "required": ["customer_id"],
-        },
-    },
-    {
-        "name": "estimate_order_total",
-        "description": "Estimate total price for a draft order line list.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "lines": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "sku": {"type": "string"},
-                            "quantity": {"type": "integer", "minimum": 1},
-                        },
-                        "required": ["sku", "quantity"],
-                    },
-                }
-            },
-            "required": ["lines"],
-        },
-    },
-]
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "data"
+
+RECIPES_CSV = DATA_DIR / "recipes.csv"
+INGREDIENTS_CSV = DATA_DIR / "ingredients.csv"
+RECIPE_INGREDIENTS_CSV = DATA_DIR / "recipe_ingredients.csv"
+RECIPE_INSTRUCTIONS_CSV = DATA_DIR / "recipe_instructions.csv"
 
 
-SYSTEM_PROMPT = """You are a grocery order reasoning agent for a Picnic-style app.
-
-Goals:
-- Help the user create, refine, and edit a practical grocery order.
-- Use tools to inspect customer history, preferences, recipes, and catalog pricing.
-- Keep spoken responses very short and actionable.
-- Always return JSON only with this exact shape:
-  {
-    "spoken_summary": "short sentence, <= 20 words",
-    "order_draft": [
-      {"sku": "VEG-TOM-001", "quantity": 2, "why": "brief reason"}
-    ],
-    "notes": "optional short note"
-  }
-
-Rules:
-- If user input is unclear, ask one brief follow-up in spoken_summary.
-- Prefer items seen in customer order history unless the user asks for new items.
-- Avoid adding unavailable products.
-- Do not include markdown, just JSON.
-"""
+def _read_csv(path: Path):
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
 
-@dataclass
-class ConversationState:
-    customer_id: str
-    messages: list[dict[str, Any]] = field(default_factory=list)
+def load_meal_catalog(max_steps_per_recipe: int = MAX_STEPS_PER_RECIPE):
+    """Build recipe objects by joining recipes, ingredients, and instructions."""
+    recipes = _read_csv(RECIPES_CSV)
+    ingredients = _read_csv(INGREDIENTS_CSV)
+    recipe_ingredients = _read_csv(RECIPE_INGREDIENTS_CSV)
+    instructions = _read_csv(RECIPE_INSTRUCTIONS_CSV)
 
+    ingredient_by_id = {item["id"]: item for item in ingredients}
 
-class GroceryVoiceAgent:
-    def __init__(self, db: Db) -> None:
-        self.db = db
-        self.sessions: dict[str, ConversationState] = {}
-
-    def run_turn(
-        self,
-        *,
-        customer_id: str,
-        transcript: str,
-        conversation_id: str | None,
-    ) -> dict[str, Any]:
-        if not ANTHROPIC_API_KEY:
-            raise RuntimeError("ANTHROPIC_API_KEY is missing in .env")
-
-        cid = conversation_id or str(uuid.uuid4())
-        state = self.sessions.get(cid)
-        if state is None:
-            state = ConversationState(customer_id=customer_id)
-            self.sessions[cid] = state
-
-        state.customer_id = customer_id
-        state.messages.append({"role": "user", "content": transcript})
-
-        assistant_payload = self._run_with_tools(state)
-        state.messages.append(
+    ingredients_by_recipe = {}
+    for row in recipe_ingredients:
+        recipe_id = row["recipe_id"]
+        ingredient = ingredient_by_id.get(row["ingredient_id"])
+        if ingredient is None:
+            continue
+        ingredients_by_recipe.setdefault(recipe_id, []).append(
             {
-                "role": "assistant",
-                "content": assistant_payload.get("spoken_summary", "I can help with your basket."),
+                "id": ingredient["id"],
+                "name": ingredient["name"],
+                "description": ingredient.get("description", ""),
+                "quantity": row.get("quantity", ""),
             }
         )
 
-        return {
-            "conversation_id": cid,
-            "spoken_summary": assistant_payload.get("spoken_summary", "I can help with your basket."),
-            "order_draft": assistant_payload.get("order_draft", []),
-            "notes": assistant_payload.get("notes", ""),
-            "transcript": transcript,
-        }
+    instructions_by_recipe = {}
+    for row in instructions:
+        recipe_id = row["recipe_id"]
+        instructions_by_recipe.setdefault(recipe_id, []).append(row)
 
-    def _run_with_tools(self, state: ConversationState) -> dict[str, Any]:
-        request_messages = [
-            {
-                "role": item["role"],
-                "content": item["content"],
-            }
-            for item in state.messages[-8:]
+    for recipe_id, step_rows in instructions_by_recipe.items():
+        step_rows.sort(key=lambda item: int(item.get("step_number", "0") or "0"))
+        instructions_by_recipe[recipe_id] = [
+            item.get("instruction", "") for item in step_rows[:max_steps_per_recipe]
         ]
 
-        for _ in range(5):
-            response = self._anthropic_messages(request_messages)
-            content_blocks = response.get("content", [])
-            tool_uses = [block for block in content_blocks if block.get("type") == "tool_use"]
-
-            if tool_uses:
-                request_messages.append({"role": "assistant", "content": content_blocks})
-                tool_results: list[dict[str, Any]] = []
-                for tool_call in tool_uses:
-                    result = self._execute_tool(tool_call["name"], tool_call.get("input") or {}, state.customer_id)
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_call["id"],
-                            "content": json.dumps(result, ensure_ascii=True),
-                        }
-                    )
-                request_messages.append({"role": "user", "content": tool_results})
-                continue
-
-            text_parts = [block.get("text", "") for block in content_blocks if block.get("type") == "text"]
-            raw_text = "\n".join(part for part in text_parts if part).strip()
-            parsed = self._parse_assistant_json(raw_text)
-            if parsed:
-                return parsed
-
-        return {
-            "spoken_summary": "I can draft a basket next. Tell me your goal.",
-            "order_draft": [],
-            "notes": "Model response fallback used.",
-        }
-
-    def _anthropic_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        headers = {
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-        payload = {
-            "model": ANTHROPIC_MODEL,
-            "max_tokens": 900,
-            "temperature": 0.2,
-            "system": SYSTEM_PROMPT,
-            "messages": messages,
-            "tools": TOOLS,
-        }
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=70,
+    catalog = []
+    for recipe in recipes:
+        recipe_id = recipe["id"]
+        catalog.append(
+            {
+                "id": recipe_id,
+                "name": recipe.get("name", ""),
+                "description": recipe.get("description", ""),
+                "portion_quantity": recipe.get("portion_quantity", ""),
+                "cook_time": recipe.get("cook_time", ""),
+                "ingredients": ingredients_by_recipe.get(recipe_id, []),
+                "instructions": instructions_by_recipe.get(recipe_id, []),
+            }
         )
-        response.raise_for_status()
-        return response.json()
+    return catalog
 
-    def _parse_assistant_json(self, text: str) -> dict[str, Any] | None:
-        if not text:
-            return None
-        candidate = text.strip()
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        candidate = candidate[start : end + 1]
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
 
-        spoken_summary = str(parsed.get("spoken_summary", "")).strip()
-        if not spoken_summary:
-            spoken_summary = "I updated your basket plan."
+def build_anthropic_prompt(user_query: str, catalog):
+    return (
+        f"{SYSTEM_INSTRUCTIONS}\n\n"
+        f"User request:\n{user_query}\n\n"
+        f"Recipe catalog JSON:\n{json.dumps(catalog, ensure_ascii=True)}"
+    )
 
-        order_draft = parsed.get("order_draft")
-        if not isinstance(order_draft, list):
-            order_draft = []
 
-        clean_lines: list[dict[str, Any]] = []
-        for line in order_draft:
-            if not isinstance(line, dict):
-                continue
-            sku = str(line.get("sku", "")).strip()
-            quantity = line.get("quantity", 1)
-            why = str(line.get("why", "")).strip()
-            try:
-                quantity = int(quantity)
-            except (TypeError, ValueError):
-                continue
-            if not sku or quantity < 1:
-                continue
-            clean_lines.append({"sku": sku, "quantity": quantity, "why": why})
+def strip_markdown(text: str) -> str:
+    """Remove common markdown characters so the response reads naturally aloud."""
+    text = text.replace("```", " ")
+    text = text.replace("**", "")
+    text = text.replace("__", "")
+    text = text.replace("#", "")
+    text = text.replace("*", "")
+    text = text.replace("- ", "")
+    text = text.replace("•", "")
+    text = text.replace("`", "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    cleaned = " ".join(lines)
+    while "  " in cleaned:
+        cleaned = cleaned.replace("  ", " ")
+    return cleaned.strip()
 
-        return {
-            "spoken_summary": " ".join(spoken_summary.split())[:180],
-            "order_draft": clean_lines,
-            "notes": str(parsed.get("notes", "")).strip(),
-        }
 
-    def _execute_tool(self, name: str, tool_input: dict[str, Any], customer_id: str) -> dict[str, Any]:
-        if name == "get_customer_context":
-            return self._tool_customer_context(tool_input.get("customer_id") or customer_id)
-        if name == "search_articles":
-            return self._tool_search_articles(tool_input)
-        if name == "search_recipes":
-            return self._tool_search_recipes(tool_input)
-        if name == "frequent_items":
-            return self._tool_frequent_items(tool_input.get("customer_id") or customer_id, tool_input)
-        if name == "estimate_order_total":
-            return self._tool_estimate_total(tool_input)
-        return {"error": f"Unknown tool: {name}"}
+def suggest_meals_with_anthropic(user_query: str, max_recipes: int = DEFAULT_MAX_RECIPES):
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is missing from environment")
 
-    def _tool_customer_context(self, customer_id: str) -> dict[str, Any]:
-        customer = self.db.row("SELECT id, name, email, country, house_hold_size FROM customers WHERE id = ?", (customer_id,))
-        if not customer:
-            return {"error": "Customer not found"}
+    catalog = load_meal_catalog()
+    prompt = build_anthropic_prompt(user_query=user_query, catalog=catalog[:max_recipes])
 
-        prefs = self.db.rows(
-            """
-            SELECT pt.code, pt.name, cp.preference_level
-            FROM customer_preferences cp
-            JOIN preference_tags pt ON pt.id = cp.tag_id
-            WHERE cp.customer_id = ?
-            ORDER BY pt.name
-            """,
-            (customer_id,),
-        )
-        recent_orders = self.db.rows(
-            """
-            SELECT id, creation_date, total_price, status
-            FROM orders
-            WHERE customer_id = ?
-            ORDER BY creation_date DESC
-            LIMIT 12
-            """,
-            (customer_id,),
-        )
-        return {
-            "customer": customer,
-            "preferences": prefs,
-            "recent_orders": recent_orders,
-            "retrieved_at": datetime.now(timezone.utc).isoformat(),
-        }
+    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    response = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=ANTHROPIC_MAX_TOKENS,
+        temperature=ANTHROPIC_TEMPERATURE,
+        messages=[{"role": "user", "content": prompt}],
+    )
 
-    def _tool_search_articles(self, tool_input: dict[str, Any]) -> dict[str, Any]:
-        query = str(tool_input.get("query", "")).strip()
-        limit = int(tool_input.get("limit", 10) or 10)
-        limit = max(1, min(limit, 25))
-        rows = self.db.rows(
-            """
-            SELECT sku, name, category, price, is_available
-            FROM articles
-            WHERE LOWER(name) LIKE LOWER(?) OR LOWER(category) LIKE LOWER(?)
-            ORDER BY is_available DESC, name ASC
-            LIMIT ?
-            """,
-            (f"%{query}%", f"%{query}%", limit),
-        )
-        return {"query": query, "results": rows}
+    text_chunks = []
+    for block in response.content:
+        value = getattr(block, "text", None)
+        if value:
+            text_chunks.append(value)
+    return strip_markdown("\n".join(text_chunks).strip())
 
-    def _tool_search_recipes(self, tool_input: dict[str, Any]) -> dict[str, Any]:
-        query = str(tool_input.get("query", "")).strip()
-        limit = int(tool_input.get("limit", 10) or 10)
-        limit = max(1, min(limit, 25))
-        rows = self.db.rows(
-            """
-            SELECT id, name, cook_time, description
-            FROM recipes
-            WHERE LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?)
-            ORDER BY name ASC
-            LIMIT ?
-            """,
-            (f"%{query}%", f"%{query}%", limit),
-        )
-        return {"query": query, "results": rows}
 
-    def _tool_frequent_items(self, customer_id: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        limit = int(tool_input.get("limit", 10) or 10)
-        limit = max(1, min(limit, 20))
-        rows = self.db.rows(
-            """
-            SELECT ol.sku, a.name, SUM(ol.quantity) AS total_qty, AVG(a.price) AS unit_price
-            FROM orders o
-            JOIN orderlines ol ON ol.order_id = o.id
-            JOIN articles a ON a.sku = ol.sku
-            WHERE o.customer_id = ?
-            GROUP BY ol.sku, a.name
-            ORDER BY total_qty DESC, a.name ASC
-            LIMIT ?
-            """,
-            (customer_id, limit),
-        )
-        return {"customer_id": customer_id, "items": rows}
+app = Flask(__name__)
 
-    def _tool_estimate_total(self, tool_input: dict[str, Any]) -> dict[str, Any]:
-        raw_lines = tool_input.get("lines") or []
-        if not isinstance(raw_lines, list):
-            return {"error": "lines must be an array"}
 
-        estimate_lines: list[dict[str, Any]] = []
-        total = 0.0
-        missing: list[str] = []
+@app.get("/health")
+def health():
+    return jsonify({"ok": True})
 
-        for line in raw_lines:
-            if not isinstance(line, dict):
-                continue
-            sku = str(line.get("sku", "")).strip()
-            qty_raw = line.get("quantity", 1)
-            try:
-                qty = int(qty_raw)
-            except (TypeError, ValueError):
-                continue
-            if not sku or qty < 1:
-                continue
 
-            row = self.db.row("SELECT name, price FROM articles WHERE sku = ?", (sku,))
-            if not row:
-                missing.append(sku)
-                continue
-            line_total = round(float(row["price"]) * qty, 2)
-            total += line_total
-            estimate_lines.append(
-                {
-                    "sku": sku,
-                    "name": row["name"],
-                    "quantity": qty,
-                    "unit_price": float(row["price"]),
-                    "line_total": line_total,
-                }
-            )
+@app.post("/meal-suggestions")
+def meal_suggestions():
+    payload = request.get_json(silent=True) or {}
+    user_query = (payload.get("query") or "").strip()
+    max_recipes = int(payload.get("max_recipes") or DEFAULT_MAX_RECIPES)
 
-        return {
-            "lines": estimate_lines,
-            "estimated_total": round(total, 2),
-            "missing_skus": missing,
-        }
+    if not user_query:
+        return jsonify({"error": "Missing required field: query"}), 400
+
+    try:
+        result = suggest_meals_with_anthropic(user_query=user_query, max_recipes=max_recipes)
+        return jsonify({"query": user_query, "suggestions": result})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=SERVER_DEBUG)

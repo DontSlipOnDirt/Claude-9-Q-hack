@@ -12,4 +12,6 @@ dependencies = [
     "requests>=2.32.5",
     "uvicorn",
     "speechrecognition>=3.16.0",
+    "anthropic>=0.92.0",
+    "flask>=3.1.3",
 ]
