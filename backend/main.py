@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import hashlib
+import os
 import secrets
 import urllib.error
+import urllib.request
 import uuid
 from datetime import date as date_type
 from pathlib import Path
@@ -11,10 +14,10 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, Response
 from starlette.staticfiles import StaticFiles
 
-from backend.config import DB_PATH, FRONTEND_DIR, OPENAI_ENV_PATH
+from backend.config import DB_PATH, FRONTEND_DIR, OPENAI_ENV_PATH, ROOT_ENV_PATH
 from backend.db import Db
 from backend.services.basket_recommender import (
     build_dish_recommendations,
@@ -89,6 +92,16 @@ class MatchDishesBody(BaseModel):
     model: str | None = None
 
 
+class VoiceTokenResponse(BaseModel):
+    token: str
+    model_id: str
+
+
+class VoiceSpeakBody(BaseModel):
+    text: str
+    model_id: str = "eleven_multilingual_v2"
+
+
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac(
@@ -139,6 +152,7 @@ def _ensure_db_exists() -> None:
 @app.on_event("startup")
 def startup_check() -> None:
     _ensure_db_exists()
+    load_env_file(str(ROOT_ENV_PATH))
     load_env_file(str(OPENAI_ENV_PATH))
 
 
@@ -301,6 +315,78 @@ def post_match_dishes(body: MatchDishesBody) -> dict[str, Any]:
         ) from e
     except urllib.error.URLError as e:
         raise HTTPException(status_code=502, detail=str(e.reason)) from e
+
+
+@app.post("/api/voice/token")
+def create_voice_token() -> VoiceTokenResponse:
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Missing ELEVENLABS_API_KEY. Add it to the repo-root .env file.",
+        )
+    model_id = "scribe_v2"
+    request = urllib.request.Request(
+        "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe",
+        headers={"xi-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=exc.code, detail=detail or exc.reason) from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=str(exc.reason)) from exc
+
+    parsed = json.loads(payload)
+    token = str(parsed.get("token", "")).strip()
+    if not token:
+        raise HTTPException(status_code=502, detail="ElevenLabs did not return a token.")
+    return VoiceTokenResponse(token=token, model_id=model_id)
+
+
+@app.post("/api/voice/speak")
+def speak_voice(body: VoiceSpeakBody) -> Response:
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    voice_id = os.environ.get("ELEVENLABS_VOICE_ID")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Missing ELEVENLABS_API_KEY. Add it to the repo-root .env file.",
+        )
+    if not voice_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Missing ELEVENLABS_VOICE_ID. Add it to the repo-root .env file.",
+        )
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text must not be empty")
+
+    payload = json.dumps({"text": text, "model_id": body.model_id}).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        data=payload,
+        headers={
+            "xi-api-key": api_key,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
+        },
+        method="POST",
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=60)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=exc.code, detail=detail or exc.reason) from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=str(exc.reason)) from exc
+
+    audio_bytes = response.read()
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 
 @app.post("/api/catalog/shopping-from-meals")
