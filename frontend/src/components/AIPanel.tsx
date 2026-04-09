@@ -13,9 +13,21 @@ interface AIPanelProps {
   isOpen: boolean;
   loading: boolean;
   onSubmitPrompt: (text: string) => void;
+  onVoiceStart?: () => void;
+  pendingActionSummary?: string | null;
+  onConfirmPendingAction?: () => void;
+  onCancelPendingAction?: () => void;
 }
 
-const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
+const AIPanel = ({
+  isOpen,
+  loading,
+  onSubmitPrompt,
+  onVoiceStart,
+  pendingActionSummary,
+  onConfirmPendingAction,
+  onCancelPendingAction,
+}: AIPanelProps) => {
   const [input, setInput] = useState("");
   const send = (text: string) => {
     const q = text.trim();
@@ -27,6 +39,8 @@ const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
   const { toggle, status, transcript, error, isRecording } = useElevenLabsVoiceRecorder({
     onTranscript: send,
     onError: (message) => toast.error(message),
+    onRecordingStart: onVoiceStart,
+    autoStopOnSilence: true,
   });
 
   if (!isOpen) return null;
@@ -40,7 +54,7 @@ const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
           <button
             type="button"
             onClick={() => void toggle()}
-            disabled={(loading && !isRecording) || status === "transcribing"}
+            disabled={status === "transcribing"}
             className={`ml-2 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
               isRecording
                 ? "bg-primary text-primary-foreground animate-pulse"
@@ -84,6 +98,29 @@ const AIPanel = ({ isOpen, loading, onSubmitPrompt }: AIPanelProps) => {
               </span>
               {transcript && <p className="mt-1 text-xs text-muted-foreground break-words">{transcript}</p>}
               {error && <p className="mt-1 text-xs text-destructive break-words">{error}</p>}
+            </div>
+          </div>
+        )}
+        {pendingActionSummary && (
+          <div className="mb-3 p-3 rounded-lg bg-card border border-border">
+            <p className="text-sm text-foreground">{pendingActionSummary}</p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => onConfirmPendingAction?.()}
+                disabled={loading}
+                className="px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
+              >
+                Confirm change
+              </button>
+              <button
+                type="button"
+                onClick={() => onCancelPendingAction?.()}
+                disabled={loading}
+                className="px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-semibold border border-border disabled:opacity-50"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}

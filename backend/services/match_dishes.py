@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
-import urllib.request
 from typing import Any
 
 from backend.db import Db
+from backend.services.openai_client import chat_json
 
 
 def estimate_recipe_meal_price(db: Db, recipe_id: str) -> float:
@@ -108,34 +108,10 @@ Respond with a single JSON object (no markdown fences) with this exact shape:
 
 
 def call_openai(api_key: str, model: str, user_content: str) -> dict[str, Any]:
-    url = "https://api.openai.com/v1/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": user_content}],
-        "max_tokens": 2000,
-        "response_format": {"type": "json_object"},
-    }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        body_text = resp.read().decode("utf-8", errors="replace")
-    parsed = json.loads(body_text)
-    content = (
-        parsed.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
-    if not content.strip():
-        raise RuntimeError(f"Empty assistant message: {body_text}")
-    return json.loads(content)
+    # api_key is retained for backward compatibility with callers, but actual key
+    # resolution now goes through shared OpenAI client env loading.
+    _ = api_key
+    return chat_json(user_content=user_content, model=model, max_tokens=2000)
 
 
 def match_dishes(
@@ -147,10 +123,10 @@ def match_dishes(
     """Return OpenAI JSON shape: ``{{"matches": [...]}}``."""
     catalog = recipes_catalog_csv(db)
     prompt = build_prompt(catalog, user_query.strip())
-    api_key = os.environ.get("OPENAI_KEY")
+    api_key = os.environ.get("OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "Missing OPENAI_KEY. Set it in openai.env as OPENAI_KEY=... or export it."
+            "Missing OpenAI key. Set OPENAI_KEY or OPENAI_API_KEY in openai.env or .env."
         )
     m = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     result = call_openai(api_key, m, prompt)

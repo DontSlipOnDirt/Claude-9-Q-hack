@@ -6,10 +6,16 @@ type VoiceStatus = "idle" | "recording" | "transcribing" | "error";
 type UseElevenLabsVoiceRecorderOptions = {
   onTranscript: (text: string) => void | Promise<void>;
   onError?: (message: string) => void;
+  onRecordingStart?: () => void;
+  autoStopOnSilence?: boolean;
 };
 
 const TARGET_SAMPLE_RATE = 16_000;
 const WS_CHUNK_SAMPLES = 3_200;
+const SILENCE_RMS_THRESHOLD = 0.012;
+const SILENCE_HOLD_MS = 1_300;
+const MIN_RECORDING_MS = 900;
+const MAX_RECORDING_MS = 15_000;
 
 function int16ToWavBlob(pcm: Int16Array, sampleRate: number): Blob {
   const bytesPerSample = 2;
@@ -139,13 +145,19 @@ function getAudioContextConstructor(): typeof AudioContext | null {
   return window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext || null;
 }
 
-export function useElevenLabsVoiceRecorder({ onTranscript, onError }: UseElevenLabsVoiceRecorderOptions) {
+export function useElevenLabsVoiceRecorder({
+  onTranscript,
+  onError,
+  onRecordingStart,
+  autoStopOnSilence = true,
+}: UseElevenLabsVoiceRecorderOptions) {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const onTranscriptRef = useRef(onTranscript);
   const onErrorRef = useRef(onError);
+  const onRecordingStartRef = useRef(onRecordingStart);
   const recordingRef = useRef(false);
   const chunksRef = useRef<Int16Array[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -153,6 +165,10 @@ export function useElevenLabsVoiceRecorder({ onTranscript, onError }: UseElevenL
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  const recordingStartedAtRef = useRef(0);
+  const lastSpeechAtRef = useRef(0);
+  const hadSpeechRef = useRef(false);
+  const autoStopRequestedRef = useRef(false);
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
@@ -161,6 +177,10 @@ export function useElevenLabsVoiceRecorder({ onTranscript, onError }: UseElevenL
   useEffect(() => {
     onErrorRef.current = onError;
   }, [onError]);
+
+  useEffect(() => {
+    onRecordingStartRef.current = onRecordingStart;
+  }, [onRecordingStart]);
 
   const cleanupRecording = useCallback(async () => {
     recordingRef.current = false;
@@ -186,65 +206,12 @@ export function useElevenLabsVoiceRecorder({ onTranscript, onError }: UseElevenL
       setStatus("error");
       onErrorRef.current?.(message);
       await cleanupRecording();
+      window.setTimeout(() => {
+        setStatus("idle");
+      }, 0);
     },
     [cleanupRecording]
   );
-
-  const start = useCallback(async () => {
-    if (status !== "idle") return;
-
-    const AudioContextCtor = getAudioContextConstructor();
-    if (!AudioContextCtor) {
-      await fail("Your browser does not support audio recording.");
-      return;
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      await fail("Microphone access is not available in this browser.");
-      return;
-    }
-
-    setError(null);
-    setTranscript("");
-    setStatus("recording");
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioContext = new AudioContextCtor();
-      if (audioContext.state === "suspended") {
-        await audioContext.resume();
-      }
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      const gain = audioContext.createGain();
-
-      gain.gain.value = 0;
-      recordingRef.current = true;
-      chunksRef.current = [];
-
-      processor.onaudioprocess = (event) => {
-        if (!recordingRef.current) return;
-        const input = event.inputBuffer.getChannelData(0);
-        const downsampled = downsampleBuffer(input, audioContext.sampleRate, TARGET_SAMPLE_RATE);
-        if (downsampled.length > 0) {
-          chunksRef.current.push(floatTo16BitPcm(downsampled));
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(gain);
-      gain.connect(audioContext.destination);
-
-      streamRef.current = stream;
-      audioContextRef.current = audioContext;
-      sourceRef.current = source;
-      processorRef.current = processor;
-      gainRef.current = gain;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await fail(`Could not start microphone recording: ${message}`);
-    }
-  }, [fail, status]);
 
   const stop = useCallback(async () => {
     if (status !== "recording") return;
@@ -379,6 +346,92 @@ export function useElevenLabsVoiceRecorder({ onTranscript, onError }: UseElevenL
       }
     }
   }, [cleanupRecording, fail, status]);
+
+  const start = useCallback(async () => {
+    if (status !== "idle") return;
+
+    const AudioContextCtor = getAudioContextConstructor();
+    if (!AudioContextCtor) {
+      await fail("Your browser does not support audio recording.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      await fail("Microphone access is not available in this browser.");
+      return;
+    }
+
+    setError(null);
+    setTranscript("");
+    setStatus("recording");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContextCtor();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const gain = audioContext.createGain();
+
+      gain.gain.value = 0;
+      recordingRef.current = true;
+      chunksRef.current = [];
+      recordingStartedAtRef.current = Date.now();
+      lastSpeechAtRef.current = recordingStartedAtRef.current;
+      hadSpeechRef.current = false;
+      autoStopRequestedRef.current = false;
+      onRecordingStartRef.current?.();
+
+      processor.onaudioprocess = (event) => {
+        if (!recordingRef.current) return;
+        const input = event.inputBuffer.getChannelData(0);
+        const downsampled = downsampleBuffer(input, audioContext.sampleRate, TARGET_SAMPLE_RATE);
+        let energy = 0;
+        for (let i = 0; i < input.length; i += 1) {
+          energy += input[i] * input[i];
+        }
+        const rms = Math.sqrt(energy / Math.max(1, input.length));
+        const now = Date.now();
+
+        if (rms >= SILENCE_RMS_THRESHOLD) {
+          hadSpeechRef.current = true;
+          lastSpeechAtRef.current = now;
+        }
+
+        if (autoStopOnSilence && !autoStopRequestedRef.current) {
+          const elapsed = now - recordingStartedAtRef.current;
+          const silenceDuration = now - lastSpeechAtRef.current;
+          const reachedMaxDuration = elapsed >= MAX_RECORDING_MS;
+          const reachedSilenceTail = hadSpeechRef.current && elapsed >= MIN_RECORDING_MS && silenceDuration >= SILENCE_HOLD_MS;
+          if (reachedMaxDuration || reachedSilenceTail) {
+            autoStopRequestedRef.current = true;
+            window.setTimeout(() => {
+              void stop();
+            }, 0);
+          }
+        }
+
+        if (downsampled.length > 0) {
+          chunksRef.current.push(floatTo16BitPcm(downsampled));
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(gain);
+      gain.connect(audioContext.destination);
+
+      streamRef.current = stream;
+      audioContextRef.current = audioContext;
+      sourceRef.current = source;
+      processorRef.current = processor;
+      gainRef.current = gain;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await fail(`Could not start microphone recording: ${message}`);
+    }
+  }, [autoStopOnSilence, fail, status, stop]);
 
   const toggle = useCallback(async () => {
     if (status === "recording") {

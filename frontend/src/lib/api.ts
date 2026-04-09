@@ -35,6 +35,17 @@ export async function fetchRecipes(): Promise<ApiRecipe[]> {
   return parseJson(res);
 }
 
+export type ApiCustomer = {
+  id: string;
+  name?: string;
+  email?: string;
+};
+
+export async function fetchCustomers(): Promise<ApiCustomer[]> {
+  const res = await fetch("/api/customers");
+  return parseJson(res);
+}
+
 export type MealPlanSlot = { recipe_id: string; label: string };
 
 export type ShoppingDetailRow = {
@@ -115,4 +126,33 @@ export async function speakText(text: string): Promise<Blob> {
   }
 
   return res.blob();
+}
+
+export type VoiceAgentTurnRequest = {
+  customer_id: string;
+  transcript?: string;
+  initialize?: boolean;
+  current_plan?: Array<Record<string, unknown>>;
+  pending_actions?: Array<Record<string, unknown>>;
+  confirmed_action_id?: string | null;
+};
+
+export type VoiceAgentTurnResponse = {
+  assistant_text: string;
+  tools_used: string[];
+  requires_confirmation: boolean;
+  proposed_actions: Array<Record<string, unknown>>;
+  data: Record<string, unknown>;
+  applied_action?: Record<string, unknown> | null;
+};
+
+export async function voiceAgentTurn(
+  body: VoiceAgentTurnRequest
+): Promise<VoiceAgentTurnResponse> {
+  const res = await fetch("/api/voice/agent/turn", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(body),
+  });
+  return parseJson(res);
 }

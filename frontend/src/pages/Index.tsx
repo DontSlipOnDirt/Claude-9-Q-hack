@@ -31,7 +31,7 @@ import {
   recurringItems,
   type DayExtraLine,
 } from "@/data/meals";
-import { fetchRecipes, shoppingFromMeals, matchDishes, speakText } from "@/lib/api";
+import { fetchCustomers, fetchRecipes, shoppingFromMeals, speakText, voiceAgentTurn } from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
 import { mergeMealAndExtraForDisplay, mergeLinesBySku } from "@/lib/mergeBasket";
 import { toast } from "@/components/ui/sonner";
@@ -74,11 +74,176 @@ const Index = () => {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiCatalogEmpty, setAiCatalogEmpty] = useState(false);
+  const [voiceInitialized, setVoiceInitialized] = useState(false);
+  const [pendingActions, setPendingActions] = useState<Array<Record<string, unknown>>>([]);
   const spokenAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const appliedApiPlan = useRef(false);
 
   const mealPlan = mealPlans[activePlanIndex];
+
+  const { data: customers } = useQuery({
+    queryKey: ["customers"],
+    queryFn: fetchCustomers,
+    staleTime: 5 * 60_000,
+  });
+
+  const activeCustomerId = customers?.[0]?.id ?? "";
+
+  const stopAssistantPlayback = useCallback(() => {
+    if (!spokenAudioRef.current) return;
+    spokenAudioRef.current.pause();
+    spokenAudioRef.current.currentTime = 0;
+    spokenAudioRef.current.src = "";
+    spokenAudioRef.current = null;
+  }, []);
+
+  const buildCurrentPlanForAgent = useCallback(() => {
+    return mealPlan.flatMap((day) =>
+      day.meals
+        .filter((meal) => meal.category !== "extras")
+        .map((meal) => ({
+          day: day.day,
+          category: meal.category,
+          name: meal.name,
+          recipe_id: meal.recipeId ?? "",
+        }))
+    );
+  }, [mealPlan]);
+
+  const speakAssistant = useCallback(async (text: string) => {
+    const spokenText = text.trim();
+    if (!spokenText) return;
+    stopAssistantPlayback();
+    const audioBlob = await speakText(spokenText);
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    spokenAudioRef.current = audio;
+    audio.onended = () => URL.revokeObjectURL(audioUrl);
+    audio.onerror = () => URL.revokeObjectURL(audioUrl);
+    await audio.play().catch(() => URL.revokeObjectURL(audioUrl));
+  }, [stopAssistantPlayback]);
+
+  const applyVoiceActionToPlan = useCallback(
+    (action: Record<string, unknown> | null | undefined) => {
+      if (!action) return;
+
+      const actionType = String(action.type ?? "").trim();
+      if (actionType === "swap_meal") {
+        const target = (action.target ?? {}) as { day?: string; category?: string };
+        const recipe = (action.recipe ?? {}) as { id?: string; name?: string; estimated_price?: number };
+        const targetDay = String(target.day ?? "").trim().toLowerCase();
+        const targetCategory = String(target.category ?? "").trim().toLowerCase();
+        const nextRecipeId = String(recipe.id ?? "").trim();
+        const nextRecipeName = String(recipe.name ?? "").trim();
+        const nextRecipePrice = Number(recipe.estimated_price ?? 0);
+        if (!targetDay || !targetCategory || !nextRecipeId || !nextRecipeName) return;
+
+        setMealPlans((prev) =>
+          prev.map((plan, pi) =>
+            pi === activePlanIndex
+              ? plan.map((day) => ({
+                  ...day,
+                  meals: day.meals.map((meal) => {
+                    if (
+                      day.day.toLowerCase() !== targetDay ||
+                      meal.category.toLowerCase() !== targetCategory ||
+                      meal.category === "extras"
+                    ) {
+                      return meal;
+                    }
+                    return {
+                      ...meal,
+                      recipeId: nextRecipeId,
+                      name: nextRecipeName,
+                      brand: "Picnic",
+                      selected: true,
+                      price: Number.isFinite(nextRecipePrice)
+                        ? Math.round(nextRecipePrice * 100) / 100
+                        : meal.price,
+                    };
+                  }),
+                }))
+              : plan
+          )
+        );
+        return;
+      }
+
+      if (actionType === "move_meal") {
+        const moveFrom = (action.from ?? {}) as { day?: string; category?: string };
+        const moveTo = (action.to ?? {}) as { day?: string; category?: string };
+        const fromDay = String(moveFrom.day ?? "").trim().toLowerCase();
+        const fromCategory = String(moveFrom.category ?? "").trim().toLowerCase();
+        const toDay = String(moveTo.day ?? "").trim().toLowerCase();
+        const toCategory = String(moveTo.category ?? "").trim().toLowerCase();
+        if (!fromDay || !fromCategory || !toDay || !toCategory) return;
+
+        setMealPlans((prev) =>
+          prev.map((plan, pi) => {
+            if (pi !== activePlanIndex) return plan;
+
+            let sourceMeal: Meal | null = null;
+            let destinationMeal: Meal | null = null;
+            for (const day of plan) {
+              if (day.day.toLowerCase() === fromDay) {
+                sourceMeal = day.meals.find((meal) => meal.category.toLowerCase() === fromCategory) ?? null;
+              }
+              if (day.day.toLowerCase() === toDay) {
+                destinationMeal = day.meals.find((meal) => meal.category.toLowerCase() === toCategory) ?? null;
+              }
+            }
+            if (!sourceMeal || !destinationMeal) return plan;
+
+            return plan.map((day) => ({
+              ...day,
+              meals: day.meals.map((meal) => {
+                const dayName = day.day.toLowerCase();
+                if (dayName === fromDay && meal.category.toLowerCase() === fromCategory) {
+                  return { ...destinationMeal };
+                }
+                if (dayName === toDay && meal.category.toLowerCase() === toCategory) {
+                  return { ...sourceMeal };
+                }
+                return meal;
+              }),
+            }));
+          })
+        );
+      }
+    },
+    [activePlanIndex]
+  );
+
+  const pendingActionSummary = useMemo(() => {
+    const first = pendingActions[0] as
+      | {
+          type?: string;
+          target?: { day?: string; category?: string };
+          recipe?: { name?: string };
+          from?: { day?: string; category?: string };
+          to?: { day?: string; category?: string };
+          reason?: string;
+        }
+      | undefined;
+    if (!first) return null;
+    const type = String(first.type ?? "");
+    if (type === "swap_meal") {
+      const day = String(first.target?.day ?? "this day");
+      const category = String(first.target?.category ?? "meal");
+      const recipeName = String(first.recipe?.name ?? "a new meal");
+      const reason = String(first.reason ?? "").trim();
+      return `Proposed swap: ${day} ${category} -> ${recipeName}${reason ? `. ${reason}` : ""}`;
+    }
+    if (type === "move_meal") {
+      const fromDay = String(first.from?.day ?? "");
+      const fromCategory = String(first.from?.category ?? "");
+      const toDay = String(first.to?.day ?? "");
+      const toCategory = String(first.to?.category ?? "");
+      return `Proposed move: ${fromDay} ${fromCategory} <-> ${toDay} ${toCategory}`.trim();
+    }
+    return "I have a pending plan update ready to apply.";
+  }, [pendingActions]);
 
   const slotExtrasBasket = useMemo(() => {
     const lines: BasketIngredient[] = [];
@@ -204,7 +369,13 @@ const Index = () => {
   });
 
   const [recurring, setRecurring] = useState(
-    recurringItems.map((r) => ({ ...r, added: true, quantity: 1 }))
+    recurringItems.map((r) => ({
+      ...r,
+      weight: "",
+      frequency: "Weekly",
+      added: true,
+      quantity: 1,
+    }))
   );
 
   useEffect(() => {
@@ -493,69 +664,150 @@ const Index = () => {
   const recurringTotal = recurring.filter((r) => r.added).reduce((s, r) => s + r.price * r.quantity, 0);
   const grandTotal = ingredientsTotal + recurringTotal;
 
+  useEffect(() => {
+    if (!aiOpen || voiceInitialized || !activeCustomerId) return;
+    let cancelled = false;
+
+    const initVoiceSession = async () => {
+      setAiLoading(true);
+      setAiError(null);
+      try {
+        const res = await voiceAgentTurn({
+          customer_id: activeCustomerId,
+          initialize: true,
+          current_plan: buildCurrentPlanForAgent(),
+          pending_actions: [],
+        });
+        if (cancelled) return;
+        setVoiceInitialized(true);
+        setPendingActions(res.proposed_actions ?? []);
+        setAiMatches([]);
+        setAiCatalogEmpty(false);
+        await speakAssistant(res.assistant_text || "Your weekly plan briefing is ready.");
+      } catch (e) {
+        if (cancelled) return;
+        const err = e instanceof Error ? e.message : String(e);
+        setAiError(`Voice session could not initialize: ${err.slice(0, 200)}`);
+      } finally {
+        if (!cancelled) setAiLoading(false);
+      }
+    };
+
+    void initVoiceSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCustomerId, aiOpen, buildCurrentPlanForAgent, speakAssistant, voiceInitialized]);
+
   const handleAiPrompt = useCallback(async (text: string) => {
     const q = text.trim();
     if (!q) return;
+    if (!activeCustomerId) {
+      setAiError("No customer found to start the voice assistant session.");
+      return;
+    }
+
     setAiLoading(true);
     setAiError(null);
     setAiCatalogEmpty(false);
     setAiMatches([]);
 
-    let matches: { id: string; name: string; reason?: string; estimated_price?: number }[] = [];
+    const normalized = q.toLowerCase();
+    const hasPendingActions = pendingActions.length > 0;
+    const isConfirm = /^(yes|yeah|yep|ok|okay|sure|confirm|do it|apply|sounds good|go ahead)([.! ]*)$/i.test(normalized);
+    const isDecline = /^(no|nope|cancel|stop|don't|do not|nah|skip that)([.! ]*)$/i.test(normalized);
+
     try {
-      const res = await matchDishes(q);
-      matches = res.matches ?? [];
+      if (hasPendingActions && isDecline) {
+        setPendingActions([]);
+        await speakAssistant("Okay, I will not apply that change.");
+        setAiLoading(false);
+        return;
+      }
+
+      const turnResponse =
+        hasPendingActions && isConfirm
+          ? await voiceAgentTurn({
+              customer_id: activeCustomerId,
+              confirmed_action_id: String(pendingActions[0]?.id ?? ""),
+              pending_actions: pendingActions,
+              current_plan: buildCurrentPlanForAgent(),
+            })
+          : await voiceAgentTurn({
+              customer_id: activeCustomerId,
+              transcript: q,
+              current_plan: buildCurrentPlanForAgent(),
+              pending_actions: pendingActions,
+            });
+
+      const rawMatches =
+        (turnResponse.data?.matches as
+          | { id: string; name: string; reason?: string; estimated_price?: number }[]
+          | undefined) ||
+        (turnResponse.data?.candidate_matches as
+          | { id: string; name: string; reason?: string; estimated_price?: number }[]
+          | undefined) ||
+        [];
+      const matches = Array.isArray(rawMatches) ? rawMatches : [];
       setAiMatches(matches);
-      setAiCatalogEmpty(matches.length === 0);
+      setAiCatalogEmpty(matches.length === 0 && turnResponse.tools_used.includes("match_dishes"));
+      setPendingActions(turnResponse.proposed_actions ?? []);
+
+      const appliedAction = turnResponse.applied_action as
+        | Record<string, unknown>
+        | undefined
+        | null;
+
+      applyVoiceActionToPlan(appliedAction);
+
+      await speakAssistant(turnResponse.assistant_text || "Done.");
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       setAiMatches([]);
       setAiCatalogEmpty(false);
-      setAiError(
-        err.includes("503") || err.toLowerCase().includes("openai")
-          ? "AI matching unavailable — add `openai.env` with OPENAI_KEY or check API logs."
-          : `Could not reach match-dishes: ${err.slice(0, 200)}`
-      );
+      setAiError(`Voice agent turn failed: ${err.slice(0, 200)}`);
       setAiLoading(false);
       return;
-    }
-
-    try {
-      const spokenText =
-        matches.length > 0
-          ? `I found ${matches.length} recipe ${matches.length === 1 ? "match" : "matches"}. ${matches
-              .slice(0, 3)
-              .map((match, index) => `${index + 1}. ${match.name}. ${match.reason ?? ""}`)
-              .join(" ")}`
-          : "I could not find any strong matches in the catalog. Try different wording or a different cuisine.";
-
-      const audioBlob = await speakText(spokenText);
-      const audioUrl = URL.createObjectURL(audioBlob);
-      if (spokenAudioRef.current) {
-        spokenAudioRef.current.pause();
-        spokenAudioRef.current.src = "";
-      }
-      const audio = new Audio(audioUrl);
-      spokenAudioRef.current = audio;
-      audio.onended = () => URL.revokeObjectURL(audioUrl);
-      audio.onerror = () => URL.revokeObjectURL(audioUrl);
-      await audio.play().catch(() => URL.revokeObjectURL(audioUrl));
-    } catch (e) {
-      const err = e instanceof Error ? e.message : String(e);
-      console.warn("Voice playback failed", err);
     } finally {
       setAiLoading(false);
     }
-  }, []);
+  }, [activeCustomerId, applyVoiceActionToPlan, buildCurrentPlanForAgent, pendingActions, speakAssistant]);
+
+  const handleConfirmPendingAction = useCallback(async () => {
+    if (!activeCustomerId || pendingActions.length === 0) return;
+    const actionId = String(pendingActions[0]?.id ?? "").trim();
+    if (!actionId) return;
+
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await voiceAgentTurn({
+        customer_id: activeCustomerId,
+        confirmed_action_id: actionId,
+        pending_actions: pendingActions,
+        current_plan: buildCurrentPlanForAgent(),
+      });
+      applyVoiceActionToPlan((res.applied_action as Record<string, unknown> | null | undefined) ?? null);
+      setPendingActions([]);
+      await speakAssistant(res.assistant_text || "Done.");
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      setAiError(`Could not confirm pending action: ${err.slice(0, 200)}`);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [activeCustomerId, applyVoiceActionToPlan, buildCurrentPlanForAgent, pendingActions, speakAssistant]);
+
+  const handleCancelPendingAction = useCallback(async () => {
+    setPendingActions([]);
+    await speakAssistant("Okay, I canceled that change.");
+  }, [speakAssistant]);
 
   useEffect(() => {
     return () => {
-      if (spokenAudioRef.current) {
-        spokenAudioRef.current.pause();
-        spokenAudioRef.current.src = "";
-      }
+      stopAssistantPlayback();
     };
-  }, []);
+  }, [stopAssistantPlayback]);
 
   const handleSwapMeal = useCallback(
     (oldId: string, newMeal: Meal) => {
@@ -724,7 +976,19 @@ const Index = () => {
       {activeNav === "planner" && (
         <>
           <Toolbar onToggleAI={() => setAiOpen((p) => !p)} aiOpen={aiOpen} />
-          <AIPanel isOpen={aiOpen} loading={aiLoading} onSubmitPrompt={handleAiPrompt} />
+          <AIPanel
+            isOpen={aiOpen}
+            loading={aiLoading}
+            onSubmitPrompt={handleAiPrompt}
+            onVoiceStart={stopAssistantPlayback}
+            pendingActionSummary={pendingActionSummary}
+            onConfirmPendingAction={() => {
+              void handleConfirmPendingAction();
+            }}
+            onCancelPendingAction={() => {
+              void handleCancelPendingAction();
+            }}
+          />
           <WeeklySummary mealPlan={mealPlan} />
           <AiSuggestionsSection
             aiMatches={aiMatches}

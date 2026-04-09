@@ -25,6 +25,7 @@ from backend.services.basket_recommender import (
     build_weekly_basket_recommendations,
 )
 from backend.services.match_dishes import load_env_file, match_dishes
+from backend.services.voice_agent import run_voice_turn
 from backend.services.shopping_from_meal_plan import build_shopping_from_meals
 from backend.services.shopping_basket import build_shopping_basket
 
@@ -100,6 +101,24 @@ class VoiceTokenResponse(BaseModel):
 class VoiceSpeakBody(BaseModel):
     text: str
     model_id: str = "eleven_multilingual_v2"
+
+
+class VoiceAgentTurnBody(BaseModel):
+    customer_id: str
+    transcript: str = ""
+    initialize: bool = False
+    current_plan: list[dict[str, Any]] = Field(default_factory=list)
+    pending_actions: list[dict[str, Any]] = Field(default_factory=list)
+    confirmed_action_id: str | None = None
+
+
+class VoiceAgentTurnResponse(BaseModel):
+    assistant_text: str
+    tools_used: list[str] = Field(default_factory=list)
+    requires_confirmation: bool = False
+    proposed_actions: list[dict[str, Any]] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
+    applied_action: dict[str, Any] | None = None
 
 
 def _hash_password(password: str) -> str:
@@ -387,6 +406,47 @@ def speak_voice(body: VoiceSpeakBody) -> Response:
 
     audio_bytes = response.read()
     return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+@app.post("/api/voice/agent/turn")
+def voice_agent_turn(body: VoiceAgentTurnBody) -> VoiceAgentTurnResponse:
+    customer_id = body.customer_id.strip()
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="customer_id must not be empty")
+
+    customer = db.row("SELECT id FROM customers WHERE id = ?", (customer_id,))
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    transcript = body.transcript.strip()
+    if not body.initialize and not transcript and not body.confirmed_action_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide transcript, initialize=true, or confirmed_action_id.",
+        )
+
+    try:
+        result = run_voice_turn(
+            db,
+            customer_id=customer_id,
+            transcript=transcript,
+            initialize=body.initialize,
+            current_plan=body.current_plan,
+            pending_actions=body.pending_actions,
+            confirmed_action_id=body.confirmed_action_id,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        raise HTTPException(
+            status_code=502,
+            detail={"upstream_status": e.code, "body": err_body},
+        ) from e
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=502, detail=str(e.reason)) from e
+
+    return VoiceAgentTurnResponse(**result)
 
 
 @app.post("/api/catalog/shopping-from-meals")
