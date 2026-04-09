@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AI_RECIPE_DRAG_MIME } from "@/lib/dragAiRecipe";
-export type AiDishMatch = { id: string; name: string; reason?: string };
+export type AiDishMatch = { id: string; name: string; reason?: string; estimated_price?: number };
 
 export interface AiSuggestionsSectionProps {
   aiMatches: AiDishMatch[];
@@ -61,7 +61,11 @@ const AiSuggestionsSection = ({
                   key={m.id}
                   draggable
                   onDragStart={(e) => {
-                    e.dataTransfer.setData(AI_RECIPE_DRAG_MIME, JSON.stringify({ id: m.id, name: m.name }));
+                    const price = typeof m.estimated_price === "number" ? m.estimated_price : 0;
+                    e.dataTransfer.setData(
+                      AI_RECIPE_DRAG_MIME,
+                      JSON.stringify({ id: m.id, name: m.name, price })
+                    );
                     e.dataTransfer.effectAllowed = "copy";
                   }}
                   className="overflow-hidden border-primary/15 bg-primary/5 cursor-grab active:cursor-grabbing select-none hover:border-primary/35 transition-colors"
@@ -71,6 +75,11 @@ const AiSuggestionsSection = ({
                       <GripVertical className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-foreground leading-snug">{m.name}</p>
+                        {typeof m.estimated_price === "number" && m.estimated_price > 0 ? (
+                          <p className="text-xs font-semibold text-foreground mt-1">
+                            {m.estimated_price.toFixed(2).replace(".", ",")} €
+                          </p>
+                        ) : null}
                         {m.reason ? (
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-3">{m.reason}</p>
                         ) : null}
