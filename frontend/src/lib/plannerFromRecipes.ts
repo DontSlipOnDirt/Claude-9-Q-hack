@@ -50,11 +50,14 @@ function poolForCategory(recipes: RecipeRow[], category: "breakfast" | "lunch" |
   return recipes;
 }
 
-/** One week grid from SQLite recipe rows. Breakfast / lunch / dinner use meal_time–tagged pools when available. */
-export function weekPlanFromRecipes(recipes: RecipeRow[]): DayPlan[] {
+/**
+ * One week grid from SQLite recipe rows. Breakfast / lunch / dinner use meal_time–tagged pools when available.
+ * `preferenceScores` reorders candidates using implicit feedback (higher = more likely to appear).
+ */
+export function weekPlanFromRecipes(recipes: RecipeRow[], preferenceScores?: Record<string, number>): DayPlan[] {
   if (!recipes.length) return [];
   const slotPools = (["breakfast", "lunch", "dinner"] as const).map((cat) =>
-    interleaveSpicyAndNonSpicyRecipes(poolForCategory(recipes, cat))
+    interleaveSpicyAndNonSpicyRecipes(poolForCategory(recipes, cat), preferenceScores)
   );
   const breakfastPool = slotPools[0];
   const lunchPool = slotPools[1];

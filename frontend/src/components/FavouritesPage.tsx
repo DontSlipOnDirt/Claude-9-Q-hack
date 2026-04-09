@@ -1,7 +1,7 @@
 import { Heart } from "lucide-react";
 
 interface FavouritesPageProps {
-  favourites: { id: string; name: string; brand: string; price: number; image: string }[];
+  favourites: { id: string; recipeId?: string; name: string; brand: string; price: number; image: string }[];
   onRemove: (id: string) => void;
 }
 

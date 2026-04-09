@@ -4,6 +4,8 @@ interface TopBarProps {
   activeNav: string;
   onNavChange: (nav: string) => void;
   userName?: string;
+  /** Saved profile photo (JPEG data URL). */
+  avatarDataUrl?: string;
   onProfileClick?: () => void;
 }
 
@@ -14,7 +16,7 @@ const navItems = [
   { id: "history", label: "History" },
 ];
 
-const TopBar = ({ activeNav, onNavChange, userName = "U", onProfileClick }: TopBarProps) => (
+const TopBar = ({ activeNav, onNavChange, userName = "U", avatarDataUrl, onProfileClick }: TopBarProps) => (
   <header className="sticky top-0 z-50 bg-primary text-primary-foreground">
     <div className="flex items-center justify-between px-4 py-2 max-w-6xl mx-auto">
       <a href="#" className="flex items-center gap-2" onClick={() => onNavChange("planner")}>
@@ -47,8 +49,17 @@ const TopBar = ({ activeNav, onNavChange, userName = "U", onProfileClick }: TopB
         <button className="p-1.5 rounded-full hover:bg-primary-foreground/10 text-primary-foreground/70 hover:text-primary-foreground" title="Log out">
           <LogOut className="w-4 h-4" />
         </button>
-        <button onClick={onProfileClick} className="ml-1 w-8 h-8 rounded-full bg-primary-foreground/20 flex items-center justify-center text-sm font-bold cursor-pointer hover:bg-primary-foreground/30 transition-colors">
-          {userName.charAt(0).toUpperCase()}
+        <button
+          type="button"
+          onClick={onProfileClick}
+          className="ml-1 w-8 h-8 rounded-full bg-primary-foreground/20 flex items-center justify-center text-sm font-bold cursor-pointer hover:bg-primary-foreground/30 transition-colors overflow-hidden shrink-0"
+          title="Profile"
+        >
+          {avatarDataUrl ? (
+            <img src={avatarDataUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            userName.charAt(0).toUpperCase()
+          )}
         </button>
       </nav>
     </div>

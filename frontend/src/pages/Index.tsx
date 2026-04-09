@@ -32,6 +32,15 @@ import {
 } from "@/data/meals";
 import { fetchRecipes, shoppingFromMeals, matchDishes, speakText } from "@/lib/api";
 import { weekPlanFromRecipes } from "@/lib/plannerFromRecipes";
+import {
+  loadRecipePreferenceScores,
+  recordRecipeBasketAdd,
+  recordRecipeExplicitPick,
+  recordRecipeFavourited,
+  recordRecipeRejected,
+  RECIPE_PREFERENCE_RESET_EVENT,
+  sortRecipesByLearnedPreference,
+} from "@/lib/recipePreferenceLearning";
 import { mergeMealAndExtraForDisplay, mergeLinesBySku } from "@/lib/mergeBasket";
 import { loadHouseholdProfile, HOUSEHOLD_PROFILE_SAVED_EVENT } from "@/lib/profileStorage";
 import { filterRecipesForPlanner } from "@/lib/recipeDietary";
@@ -72,10 +81,14 @@ const Index = () => {
   const mealPlanBasketRef = useRef<BasketIngredient[]>([]);
   mealPlanBasketRef.current = mealPlanBasket;
 
-  const [favourites, setFavourites] = useState<{ id: string; name: string; brand: string; price: number; image: string }[]>([]);
+  const [favourites, setFavourites] = useState<
+    { id: string; recipeId?: string; name: string; brand: string; price: number; image: string }[]
+  >([]);
   const [checkoutPageOpen, setCheckoutPageOpen] = useState(false);
   const [easterPageOpen, setEasterPageOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  /** Top bar avatar / initials — refreshed when profile is saved. */
+  const [barProfile, setBarProfile] = useState(() => loadHouseholdProfile());
 
   const [aiMatches, setAiMatches] = useState<
     { id: string; name: string; reason?: string; estimated_price?: number }[]
@@ -177,7 +190,10 @@ const Index = () => {
   const spicyHiddenFromPlanner = spicyLearnState.avoidSpicy;
 
   useEffect(() => {
-    const onProfileSaved = () => setPlannerDietKey((k) => k + 1);
+    const onProfileSaved = () => {
+      setPlannerDietKey((k) => k + 1);
+      setBarProfile(loadHouseholdProfile());
+    };
     window.addEventListener(HOUSEHOLD_PROFILE_SAVED_EVENT, onProfileSaved);
     return () => window.removeEventListener(HOUSEHOLD_PROFILE_SAVED_EVENT, onProfileSaved);
   }, []);
@@ -186,6 +202,12 @@ const Index = () => {
     const onSpicyLearning = () => setSpicyLearningKey((k) => k + 1);
     window.addEventListener(SPICY_LEARNING_EVENT, onSpicyLearning);
     return () => window.removeEventListener(SPICY_LEARNING_EVENT, onSpicyLearning);
+  }, []);
+
+  useEffect(() => {
+    const onPrefReset = () => setPlannerDietKey((k) => k + 1);
+    window.addEventListener(RECIPE_PREFERENCE_RESET_EVENT, onPrefReset);
+    return () => window.removeEventListener(RECIPE_PREFERENCE_RESET_EVENT, onPrefReset);
   }, []);
 
   useEffect(() => {
@@ -206,7 +228,7 @@ const Index = () => {
       toast.info("No recipes match your diet without spicy dishes — showing a wider set.");
       poolSpicy = pool;
     }
-    const plan = weekPlanFromRecipes(poolSpicy);
+    const plan = weekPlanFromRecipes(poolSpicy, loadRecipePreferenceScores());
     setMealPlans((prev) => {
       const previousWeek = prev[0];
       if (!previousWeek?.length) return [plan];
@@ -461,6 +483,9 @@ const Index = () => {
         return;
       }
       if (!meal.recipeId && meal.name === "Add a recipe") return;
+      if (meal.recipeId) {
+        recordRecipeRejected(meal.recipeId);
+      }
       if (mealHasSpicyTag(meal.dietTags)) {
         const crossed = recordSpicyReject();
         if (crossed) {
@@ -525,6 +550,9 @@ const Index = () => {
         quantity: number;
       }[]
     ) => {
+      if (selectedMealData?.recipeId) {
+        recordRecipeBasketAdd(selectedMealData.recipeId);
+      }
       setExtraGroceries((prev) => {
         let next = prev;
         for (const ing of ingredients) {
@@ -537,7 +565,7 @@ const Index = () => {
         return next;
       });
     },
-    [mergeExtraLine]
+    [mergeExtraLine, selectedMealData?.recipeId]
   );
 
   const handleUpdateIngredientQty = useCallback((id: string, delta: number) => {
@@ -570,7 +598,22 @@ const Index = () => {
       setFavourites((prev) => {
         if (prev.find((f) => f.id === id)) return prev.filter((f) => f.id !== id);
         const meal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === id);
-        if (meal) return [...prev, { id: meal.id, name: meal.name, brand: meal.brand, price: meal.price, image: meal.image }];
+        if (meal) {
+          if (meal.recipeId) {
+            recordRecipeFavourited(meal.recipeId);
+          }
+          return [
+            ...prev,
+            {
+              id: meal.id,
+              recipeId: meal.recipeId,
+              name: meal.name,
+              brand: meal.brand,
+              price: meal.price,
+              image: meal.image,
+            },
+          ];
+        }
         return prev;
       });
     },
@@ -698,9 +741,19 @@ const Index = () => {
   );
 
   const handleDropAiRecipeOnSlot = useCallback(
-    (mealId: string, recipe: { id: string; name: string; price: number }) => {
+    (
+      mealId: string,
+      recipe: { id: string; name: string; price: number },
+      learning: "explicit_pick" | "auto_swap" = "explicit_pick"
+    ) => {
       const oldMeal = mealPlan.flatMap((d) => d.meals).find((m) => m.id === mealId);
       const newTags = recipeDietTagsById[recipe.id];
+      if (oldMeal?.recipeId && oldMeal.recipeId !== recipe.id) {
+        recordRecipeRejected(oldMeal.recipeId);
+      }
+      if (learning === "explicit_pick" && (!oldMeal?.recipeId || oldMeal.recipeId !== recipe.id)) {
+        recordRecipeExplicitPick(recipe.id);
+      }
       if (mealHasSpicyTag(oldMeal?.dietTags) && !mealHasSpicyTag(newTags)) {
         const crossed = recordSpicyReject();
         if (crossed) {
@@ -759,8 +812,11 @@ const Index = () => {
         toast.info("No other recipe fits your preferences right now.");
         return;
       }
-      const pick = pool[Math.floor(Math.random() * pool.length)];
-      handleDropAiRecipeOnSlot(mealId, { id: pick.id, name: pick.name, price: 0 });
+      const ranked = sortRecipesByLearnedPreference(pool);
+      const topN = Math.min(12, ranked.length);
+      const band = ranked.slice(0, Math.max(1, topN));
+      const pick = band[Math.floor(Math.random() * band.length)];
+      handleDropAiRecipeOnSlot(mealId, { id: pick.id, name: pick.name, price: 0 }, "auto_swap");
     },
     [catalogRecipes, mealPlan, handleDropAiRecipeOnSlot]
   );
@@ -855,7 +911,13 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <TopBar activeNav={activeNav} onNavChange={setActiveNav} onProfileClick={() => setProfileOpen(true)} />
+      <TopBar
+        activeNav={activeNav}
+        onNavChange={setActiveNav}
+        userName="Sarah"
+        avatarDataUrl={barProfile.avatarDataUrl}
+        onProfileClick={() => setProfileOpen(true)}
+      />
       <FestiveBanner onExplore={() => setEasterPageOpen(true)} />
 
       {activeNav === "planner" && (

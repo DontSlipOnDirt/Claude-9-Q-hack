@@ -5,6 +5,8 @@ export type SavedHouseholdProfile = {
   /** `preference_tags.code` values (e.g. gluten_free, vegan, lactose_intolerant). */
   selectedDiets: string[];
   dietCounts: Record<string, number>;
+  /** Compressed JPEG data URL for profile photo (set in the app, not on server). */
+  avatarDataUrl?: string;
 };
 
 const STORAGE_KEY = "picnic_household_profile_v1";
@@ -103,7 +105,13 @@ export function loadHouseholdProfile(): SavedHouseholdProfile {
       defaults.dietCounts
     );
 
-    return { adults, children, pets, selectedDiets, dietCounts };
+    const avatarRaw = p.avatarDataUrl;
+    const avatarDataUrl =
+      typeof avatarRaw === "string" && avatarRaw.startsWith("data:image/") && avatarRaw.length < 700_000
+        ? avatarRaw
+        : undefined;
+
+    return { adults, children, pets, selectedDiets, dietCounts, avatarDataUrl };
   } catch {
     return { ...defaults, dietCounts: { ...defaults.dietCounts } };
   }

@@ -93,16 +93,31 @@ export function applySpicyPoolRules<T extends Pick<ApiRecipe, "name" | "diet_tag
 
 /**
  * Alternate spicy- and non-spicy-tagged recipes so the weekly grid surfaces both when the pool has both.
- * Preserves relative order within each group. No-op if only one group exists.
+ * Within each group, order by learned preference score (then name). Single-group pools are sorted the same way.
  */
-export function interleaveSpicyAndNonSpicyRecipes<T extends Pick<ApiRecipe, "diet_tags">>(recipes: T[]): T[] {
+export function interleaveSpicyAndNonSpicyRecipes<T extends Pick<ApiRecipe, "diet_tags" | "id" | "name">>(
+  recipes: T[],
+  preferenceScores?: Record<string, number>
+): T[] {
+  const scores = preferenceScores ?? {};
+  const byPref = (a: T, b: T) => {
+    const da = scores[a.id] ?? 0;
+    const db = scores[b.id] ?? 0;
+    if (db !== da) return db - da;
+    return a.name.localeCompare(b.name);
+  };
+
   const spicy: T[] = [];
   const mild: T[] = [];
   for (const r of recipes) {
     if (r.diet_tags?.includes("spicy")) spicy.push(r);
     else mild.push(r);
   }
-  if (spicy.length === 0 || mild.length === 0) return recipes;
+  spicy.sort(byPref);
+  mild.sort(byPref);
+  if (spicy.length === 0 || mild.length === 0) {
+    return [...recipes].sort(byPref);
+  }
   const out: T[] = [];
   const n = Math.max(spicy.length, mild.length);
   for (let k = 0; k < n; k++) {
