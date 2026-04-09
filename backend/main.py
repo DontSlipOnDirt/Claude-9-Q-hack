@@ -7,6 +7,7 @@ import secrets
 import urllib.error
 import urllib.request
 import uuid
+from collections import defaultdict
 from datetime import date as date_type
 from pathlib import Path
 from typing import Any, Literal
@@ -90,6 +91,10 @@ class ShoppingFromMealsBody(BaseModel):
 class MatchDishesBody(BaseModel):
     query: str
     model: str | None = None
+    dietary_needs: list[str] | None = Field(
+        default=None,
+        description="Household profile labels (e.g. Vegan, Gluten-free).",
+    )
 
 
 class VoiceTokenResponse(BaseModel):
@@ -294,7 +299,29 @@ def article_detail(sku: str) -> dict[str, Any]:
 
 @app.get("/api/catalog/recipes")
 def list_recipes() -> list[dict[str, Any]]:
-    return db.rows("SELECT * FROM recipes ORDER BY name")
+    recipes = db.rows("SELECT * FROM recipes ORDER BY name")
+    tag_rows = db.rows(
+        """
+        SELECT rt.recipe_id, pt.code, pt.tag_type
+        FROM recipe_tags rt
+        JOIN preference_tags pt ON pt.id = rt.tag_id
+        """
+    )
+    diet_by_rid: dict[str, list[str]] = defaultdict(list)
+    meal_by_rid: dict[str, list[str]] = defaultdict(list)
+    for r in tag_rows:
+        rid = str(r["recipe_id"]).strip()
+        code = str(r["code"]).strip()
+        ttype = str(r["tag_type"]).strip()
+        if ttype == "meal_time":
+            meal_by_rid[rid].append(code)
+        else:
+            diet_by_rid[rid].append(code)
+    for rec in recipes:
+        rid = str(rec["id"]).strip()
+        rec["diet_tags"] = sorted(set(diet_by_rid.get(rid, [])))
+        rec["meal_times"] = sorted(set(meal_by_rid.get(rid, [])))
+    return recipes
 
 
 @app.post("/api/catalog/match-dishes")
@@ -304,7 +331,12 @@ def post_match_dishes(body: MatchDishesBody) -> dict[str, Any]:
     if not q:
         raise HTTPException(status_code=400, detail="query must not be empty")
     try:
-        return match_dishes(db, q, model=body.model)
+        return match_dishes(
+            db,
+            q,
+            model=body.model,
+            dietary_needs=body.dietary_needs,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except urllib.error.HTTPError as e:

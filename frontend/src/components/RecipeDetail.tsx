@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { ArrowLeft, Heart, Share2, Minus, Plus, Trash2, ShoppingCart } from "lucide-react";
+import DietStickers, { hasVisibleDietStickers } from "@/components/DietStickers";
 import { Ingredient } from "@/data/meals";
 
 interface RecipeDetailProps {
   title: string;
   subtitle: string;
   heroEmoji?: string;
-  calories: number;
   prepTime: string;
   preparation: string[];
   ingredients: Ingredient[];
@@ -26,9 +26,23 @@ interface RecipeDetailProps {
   onToggleFavourite: (id: string) => void;
   isFavourite: boolean;
   mealId: string;
+  dietTags?: string[];
 }
 
-const RecipeDetail = ({ title, subtitle, heroEmoji, calories, prepTime, preparation, ingredients, onBack, onAddToBasket, onToggleFavourite, isFavourite, mealId }: RecipeDetailProps) => {
+const RecipeDetail = ({
+  title,
+  subtitle,
+  heroEmoji,
+  prepTime,
+  preparation,
+  ingredients,
+  onBack,
+  onAddToBasket,
+  onToggleFavourite,
+  isFavourite,
+  mealId,
+  dietTags,
+}: RecipeDetailProps) => {
   const [tab, setTab] = useState<"ingredients" | "preparation">("ingredients");
   const [items, setItems] = useState(ingredients.map((i) => ({ ...i })));
   const [portions, setPortions] = useState(4);
@@ -83,8 +97,12 @@ const RecipeDetail = ({ title, subtitle, heroEmoji, calories, prepTime, preparat
       <div className="px-4 pt-3 pb-2 bg-card">
         <p className="text-sm text-accent font-medium">{subtitle}</p>
         <h2 className="text-2xl font-bold text-foreground">{title}</h2>
+        {hasVisibleDietStickers(dietTags) && (
+          <div className="mt-2">
+            <DietStickers dietTags={dietTags} size="md" />
+          </div>
+        )}
         <div className="flex gap-4 mt-2 text-sm text-muted-foreground">
-          <span>🔥 {calories} kcal</span>
           <span>⏱️ {prepTime}</span>
         </div>
       </div>

@@ -20,8 +20,9 @@ export interface Meal {
   image: string;
   category: "breakfast" | "lunch" | "dinner" | "extras";
   selected: boolean;
-  calories?: number;
   recipeId?: string;
+  /** preference_tags.code values from catalog, e.g. vegan, halal */
+  dietTags?: string[];
   /** Groceries for this weekday when category is "extras". */
   extrasLines?: DayExtraLine[];
 }
@@ -61,28 +62,28 @@ export interface Ingredient {
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
 function seedMealsForPlanner(): DayPlan[] {
-  const presets: { name: string; brand: string; emoji: string; price: number; weight: string; cal: number }[] = [
-    { name: "Berry Oat Bowl", brand: "Morning", emoji: "🫐", price: 4.29, weight: "320 g", cal: 380 },
-    { name: "Avocado Toast", brand: "Urban Bakery", emoji: "🥑", price: 5.49, weight: "1 serving", cal: 420 },
-    { name: "Greek Yogurt Parfait", brand: "Dairy Fresh", emoji: "🥛", price: 3.99, weight: "250 g", cal: 310 },
-    { name: "Caesar Salad Bowl", brand: "GreenFork", emoji: "🥗", price: 7.99, weight: "400 g", cal: 450 },
-    { name: "Tomato Soup & Bread", brand: "Kitchen", emoji: "🍅", price: 6.49, weight: "500 ml", cal: 520 },
-    { name: "Chicken Wrap", brand: "StreetEat", emoji: "🌯", price: 8.29, weight: "1 wrap", cal: 610 },
-    { name: "Pasta Primavera", brand: "Nonna", emoji: "🍝", price: 9.49, weight: "450 g", cal: 680 },
-    { name: "Salmon & Rice", brand: "Nordic", emoji: "🐟", price: 11.99, weight: "480 g", cal: 720 },
-    { name: "Veggie Curry", brand: "Spice Route", emoji: "🍛", price: 8.99, weight: "420 g", cal: 590 },
-    { name: "Beef Stir-fry", brand: "Wok House", emoji: "🥩", price: 10.49, weight: "460 g", cal: 750 },
-    { name: "Margherita Pizza", brand: "Oven", emoji: "🍕", price: 8.79, weight: "30 cm", cal: 820 },
-    { name: "Sushi Selection", brand: "Tokyo", emoji: "🍣", price: 12.99, weight: "12 pcs", cal: 540 },
-    { name: "Pumpkin Soup", brand: "Harvest", emoji: "🎃", price: 5.99, weight: "400 ml", cal: 360 },
-    { name: "Quinoa Bowl", brand: "Protein+", emoji: "🥙", price: 9.29, weight: "420 g", cal: 560 },
-    { name: "Fish & Chips", brand: "Harbour", emoji: "🍟", price: 9.99, weight: "1 portion", cal: 890 },
-    { name: "Ratatouille", brand: "Provence", emoji: "🍆", price: 7.49, weight: "380 g", cal: 410 },
-    { name: "BBQ Ribs", brand: "Smokehouse", emoji: "🍖", price: 13.49, weight: "600 g", cal: 920 },
-    { name: "Pad Thai", brand: "Bangkok", emoji: "🍜", price: 9.89, weight: "450 g", cal: 640 },
-    { name: "Chili Sin Carne", brand: "Plant", emoji: "🫘", price: 7.29, weight: "400 g", cal: 470 },
-    { name: "Cheese Fondue Kit", brand: "Alpine", emoji: "🫕", price: 14.99, weight: "2 portions", cal: 980 },
-    { name: "Breakfast Burrito", brand: "Rise", emoji: "🌮", price: 6.79, weight: "1 roll", cal: 550 },
+  const presets: { name: string; brand: string; emoji: string; price: number; weight: string }[] = [
+    { name: "Berry Oat Bowl", brand: "Morning", emoji: "🫐", price: 4.29, weight: "320 g" },
+    { name: "Avocado Toast", brand: "Urban Bakery", emoji: "🥑", price: 5.49, weight: "1 serving" },
+    { name: "Greek Yogurt Parfait", brand: "Dairy Fresh", emoji: "🥛", price: 3.99, weight: "250 g" },
+    { name: "Caesar Salad Bowl", brand: "GreenFork", emoji: "🥗", price: 7.99, weight: "400 g" },
+    { name: "Tomato Soup & Bread", brand: "Kitchen", emoji: "🍅", price: 6.49, weight: "500 ml" },
+    { name: "Chicken Wrap", brand: "StreetEat", emoji: "🌯", price: 8.29, weight: "1 wrap" },
+    { name: "Pasta Primavera", brand: "Nonna", emoji: "🍝", price: 9.49, weight: "450 g" },
+    { name: "Salmon & Rice", brand: "Nordic", emoji: "🐟", price: 11.99, weight: "480 g" },
+    { name: "Veggie Curry", brand: "Spice Route", emoji: "🍛", price: 8.99, weight: "420 g" },
+    { name: "Beef Stir-fry", brand: "Wok House", emoji: "🥩", price: 10.49, weight: "460 g" },
+    { name: "Margherita Pizza", brand: "Oven", emoji: "🍕", price: 8.79, weight: "30 cm" },
+    { name: "Sushi Selection", brand: "Tokyo", emoji: "🍣", price: 12.99, weight: "12 pcs" },
+    { name: "Pumpkin Soup", brand: "Harvest", emoji: "🎃", price: 5.99, weight: "400 ml" },
+    { name: "Quinoa Bowl", brand: "Protein+", emoji: "🥙", price: 9.29, weight: "420 g" },
+    { name: "Fish & Chips", brand: "Harbour", emoji: "🍟", price: 9.99, weight: "1 portion" },
+    { name: "Ratatouille", brand: "Provence", emoji: "🍆", price: 7.49, weight: "380 g" },
+    { name: "BBQ Ribs", brand: "Smokehouse", emoji: "🍖", price: 13.49, weight: "600 g" },
+    { name: "Pad Thai", brand: "Bangkok", emoji: "🍜", price: 9.89, weight: "450 g" },
+    { name: "Chili Sin Carne", brand: "Plant", emoji: "🫘", price: 7.29, weight: "400 g" },
+    { name: "Cheese Fondue Kit", brand: "Alpine", emoji: "🫕", price: 14.99, weight: "2 portions" },
+    { name: "Breakfast Burrito", brand: "Rise", emoji: "🌮", price: 6.79, weight: "1 roll" },
   ];
 
   const cats: Meal["category"][] = ["breakfast", "lunch", "dinner", "extras"];
@@ -115,7 +116,6 @@ function seedMealsForPlanner(): DayPlan[] {
         image: p.emoji,
         category,
         selected: true,
-        calories: p.cal,
       };
     }),
   }));
@@ -128,7 +128,6 @@ export function getRecipeForMeal(meal: Meal): {
   title: string;
   subtitle: string;
   heroEmoji?: string;
-  calories: number;
   prepTime: string;
   preparation: string[];
   ingredients: Ingredient[];
@@ -138,7 +137,6 @@ export function getRecipeForMeal(meal: Meal): {
       title: meal.name,
       subtitle: "Groceries",
       heroEmoji: meal.image,
-      calories: 0,
       prepTime: "—",
       preparation: [],
       ingredients: [],
@@ -149,7 +147,6 @@ export function getRecipeForMeal(meal: Meal): {
     title: meal.name,
     subtitle: `${meal.brand} · ${meal.category}`,
     heroEmoji: meal.image,
-    calories: meal.calories ?? 400,
     prepTime: "20–30 min",
     preparation: [
       "Gather ingredients and prep vegetables.",

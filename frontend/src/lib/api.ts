@@ -1,3 +1,5 @@
+import { inferMealTimesFromName } from "@/lib/mealTimeHints";
+
 const jsonHeaders = { "Content-Type": "application/json" };
 
 async function parseJson<T>(res: Response): Promise<T> {
@@ -10,6 +12,20 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 export async function getHealth(): Promise<{ status: string }> {
   const res = await fetch("/api/health");
+  return parseJson(res);
+}
+
+export type PreferenceTag = {
+  id: string;
+  code: string;
+  name: string;
+  tag_type: string;
+  description: string;
+};
+
+/** All preference tags from SQLite (group by `tag_type` for dietary UI). */
+export async function fetchPreferenceTags(): Promise<PreferenceTag[]> {
+  const res = await fetch("/api/tags");
   return parseJson(res);
 }
 
@@ -28,11 +44,29 @@ export async function fetchArticles(): Promise<ApiArticle[]> {
   return parseJson(res);
 }
 
-export type ApiRecipe = { id: string; name: string };
+export type ApiRecipe = {
+  id: string;
+  name: string;
+  /** preference_tags.code values from recipe_tags join, e.g. vegan, halal, gluten_free */
+  diet_tags?: string[];
+  /** `breakfast` | `lunch` | `dinner` from recipe_tags with tag_type meal_time */
+  meal_times?: string[];
+};
 
 export async function fetchRecipes(): Promise<ApiRecipe[]> {
   const res = await fetch("/api/catalog/recipes");
-  return parseJson(res);
+  const rows = await parseJson<ApiRecipe[] & { dietTags?: string[] }[]>(res);
+  // FastAPI uses snake_case; some stacks rewrite JSON to camelCase — accept both.
+  return rows.map((r) => {
+    const tags = r.diet_tags ?? r.dietTags;
+    const rawMt = r.meal_times ?? r.mealTimes;
+    const mt = Array.isArray(rawMt) && rawMt.length > 0 ? rawMt : inferMealTimesFromName(r.name);
+    return {
+      ...r,
+      diet_tags: Array.isArray(tags) ? tags : undefined,
+      meal_times: mt,
+    };
+  });
 }
 
 export type MealPlanSlot = { recipe_id: string; label: string };
@@ -79,12 +113,17 @@ export type MatchDishesResponse = {
 
 export async function matchDishes(
   query: string,
-  model?: string
+  model?: string,
+  dietaryNeeds?: string[]
 ): Promise<MatchDishesResponse> {
   const res = await fetch("/api/catalog/match-dishes", {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify({ query, model }),
+    body: JSON.stringify({
+      query,
+      model,
+      dietary_needs: dietaryNeeds?.length ? dietaryNeeds : undefined,
+    }),
   });
   return parseJson(res);
 }
